@@ -30,8 +30,11 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     Procesar mensaje con GPT-4 usando historial de conversación
     """
     
+    print(f"🔍 DEBUG: Procesando mensaje de {phone}: {message}")
+    
     # Detectar idioma
     language = detect_language(message)
+    print(f"🔍 DEBUG: Idioma detectado: {language}")
     
     # Mapeo de idiomas
     language_names = {
@@ -299,8 +302,10 @@ INSTRUCCIONES:
             assistant_reply = message_response.content
         
         # Guardar en historial
+        print(f"🔍 DEBUG: Guardando en historial...")
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
+        print(f"🔍 DEBUG: Historial guardado correctamente")
         
         # Detectar si el usuario quiere empezar de nuevo
         restart_keywords = ["empezar de nuevo", "olvidar", "reiniciar", "start over", "començar de nou"]
@@ -310,5 +315,7 @@ INSTRUCCIONES:
         return assistant_reply
     
     except Exception as e:
-        print(f"Error procesando con IA: {e}")
+        print(f"❌ ERROR COMPLETO procesando con IA: {e}")
+        import traceback
+        traceback.print_exc()
         return "Lo siento, hubo un error procesando tu mensaje. ¿Puedes intentar de nuevo?"
