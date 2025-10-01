@@ -14,9 +14,9 @@ def detect_language(text):
     except LangDetectException:
         return 'es'
 
-def process_message_with_ai(message, phone, appointment_manager):
+def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
-    Procesar mensaje con GPT-4 y ejecutar acciones si es necesario
+    Procesar mensaje con GPT-4 usando historial de conversación
     """
     
     # Detectar idioma
@@ -49,34 +49,39 @@ CAPACIDADES:
 FORMATO DE FECHAS: Acepta formatos naturales como "mañana", "el lunes", "15 de octubre"
 FORMATO DE HORAS: Acepta "10 de la mañana", "15:30", "3 de la tarde"
 
-INSTRUCCIONES:
-- Sé amable y conversacional
+INSTRUCCIONES IMPORTANTES:
+- Mantén el contexto de la conversación anterior
+- Si el usuario ya te dio algún dato (nombre, fecha, hora, servicio), recuérdalo
 - Pide información faltante una cosa a la vez
 - Confirma los detalles antes de crear la cita
-- Si el usuario quiere agendar, usa la función create_appointment cuando tengas todos los datos
+- Si el usuario quiere agendar, usa la función create_appointment cuando tengas TODOS los datos
 - Si el usuario quiere ver sus citas, usa list_appointments
 
-SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médica, Revisión"""
+SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médica, Revisión
+
+Si el usuario dice "empezar de nuevo" o "cancelar", olvida la conversación anterior."""
 
     try:
-        
         print(f"🔍 Intentando procesar mensaje: {message}")
         print(f"🔍 API Key configurada: {os.getenv('OPENAI_API_KEY')[:20]}...")
+        
+        # Obtener historial de conversación
+        history = conversation_manager.get_history(phone, limit=10)
+        
+        # Construir mensajes incluyendo historial
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": message})
         
         # Inicializar cliente OpenAI
         print("🔍 Inicializando cliente OpenAI...")
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         print("✅ Cliente OpenAI inicializado")
-        # Inicializar cliente OpenAI
-        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
         # Llamada a GPT-4 con function calling
         response = client.chat.completions.create(
             model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message}
-            ],
+            messages=messages,
             tools=[
                 {
                     "type": "function",
@@ -119,6 +124,7 @@ SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médi
         )
         
         message_response = response.choices[0].message
+        assistant_reply = ""
         
         # Si la IA quiere ejecutar una función
         if message_response.tool_calls:
@@ -145,9 +151,12 @@ SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médi
                         'ca': f"✅ Cita confirmada!\n\n👤 Nom: {function_args['client_name']}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n💼 Servei: {function_args['service']}\n\nT'enviarem un recordatori el dia anterior."
                     }
                     
-                    return confirmations.get(language, confirmations['es'])
+                    assistant_reply = confirmations.get(language, confirmations['es'])
+                    
+                    # Limpiar historial después de completar la cita
+                    conversation_manager.clear_history(phone)
                 else:
-                    return "❌ Hubo un error al crear la cita. Por favor intenta de nuevo."
+                    assistant_reply = "❌ Hubo un error al crear la cita. Por favor intenta de nuevo."
             
             elif function_name == "list_appointments":
                 appointments = appointment_manager.get_appointments(phone)
@@ -158,25 +167,33 @@ SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médi
                         'en': "📅 You don't have any scheduled appointments.",
                         'ca': "📅 No tens cites programades."
                     }
-                    return no_apts.get(language, no_apts['es'])
-                
-                # Formatear lista de citas
-                apts_list = {
-                    'es': "📅 Tus citas:\n\n",
-                    'en': "📅 Your appointments:\n\n",
-                    'ca': "📅 Les teves cites:\n\n"
-                }
-                
-                response_text = apts_list.get(language, apts_list['es'])
-                
-                for apt in appointments:
-                    apt_id, name, date, time, service, status = apt
-                    response_text += f"• {date} a las {time}\n  {service} - {name}\n  Estado: {status}\n\n"
-                
-                return response_text
+                    assistant_reply = no_apts.get(language, no_apts['es'])
+                else:
+                    # Formatear lista de citas
+                    apts_list = {
+                        'es': "📅 Tus citas:\n\n",
+                        'en': "📅 Your appointments:\n\n",
+                        'ca': "📅 Les teves cites:\n\n"
+                    }
+                    
+                    assistant_reply = apts_list.get(language, apts_list['es'])
+                    
+                    for apt in appointments:
+                        apt_id, name, date, time, service, status = apt
+                        assistant_reply += f"• {date} a las {time}\n  {service} - {name}\n  Estado: {status}\n\n"
+        else:
+            # Respuesta directa sin función
+            assistant_reply = message_response.content
         
-        # Si no hay function call, devolver la respuesta directa
-        return message_response.content
+        # Guardar en historial
+        conversation_manager.save_message(phone, "user", message)
+        conversation_manager.save_message(phone, "assistant", assistant_reply)
+        
+        # Detectar si el usuario quiere empezar de nuevo
+        if any(word in message.lower() for word in ["empezar de nuevo", "cancelar", "olvidar", "reiniciar", "start over"]):
+            conversation_manager.clear_history(phone)
+        
+        return assistant_reply
     
     except Exception as e:
         print(f"Error procesando con IA: {e}")

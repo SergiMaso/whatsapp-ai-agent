@@ -4,7 +4,7 @@ from twilio.rest import Client
 import os
 from dotenv import load_dotenv
 from utils.transcription import transcribe_audio
-from utils.appointments import AppointmentManager
+from utils.appointments import AppointmentManager, ConversationManager
 from utils.ai_processor import process_message_with_ai
 import base64
 
@@ -28,6 +28,7 @@ else:
 
 # Inicializar gestor de citas
 appointment_manager = AppointmentManager()
+conversation_manager = ConversationManager()
 
 @app.route('/')
 def home():
@@ -77,7 +78,7 @@ def whatsapp_webhook():
             return str(resp)
         
         # Procesar mensaje con IA
-        ai_response = process_message_with_ai(incoming_msg, from_number, appointment_manager)
+        ai_response = process_message_with_ai(incoming_msg, from_number, appointment_manager, conversation_manager)
         
         # Enviar respuesta
         resp.message(ai_response)

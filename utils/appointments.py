@@ -114,3 +114,104 @@ class AppointmentManager:
         except Exception as e:
             print(f"Error cancelando cita: {e}")
             return False
+        
+
+class ConversationManager:
+    def __init__(self):
+        self.database_url = os.getenv('DATABASE_URL')
+        self.ensure_table_exists()
+    
+    def get_connection(self):
+        """Crear conexión a la base de datos"""
+        return psycopg2.connect(self.database_url)
+    
+    def ensure_table_exists(self):
+        """Crear la tabla de conversaciones si no existe"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id SERIAL PRIMARY KEY,
+                    phone VARCHAR(50) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Crear índice para búsquedas rápidas por teléfono
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conversations_phone 
+                ON conversations(phone, created_at DESC)
+            """)
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print("✅ Tabla de conversaciones creada/verificada")
+        
+        except Exception as e:
+            print(f"Error creando tabla de conversaciones: {e}")
+    
+    def save_message(self, phone, role, content):
+        """Guardar un mensaje en el historial"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO conversations (phone, role, content)
+                VALUES (%s, %s, %s)
+            """, (phone, role, content))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        
+        except Exception as e:
+            print(f"Error guardando mensaje: {e}")
+    
+    def get_history(self, phone, limit=10):
+        """Obtener historial de conversación de un usuario"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT role, content
+                FROM conversations
+                WHERE phone = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (phone, limit))
+            
+            messages = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            # Invertir para que estén en orden cronológico
+            return [{"role": role, "content": content} for role, content in reversed(messages)]
+        
+        except Exception as e:
+            print(f"Error obteniendo historial: {e}")
+            return []
+    
+    def clear_history(self, phone):
+        """Limpiar historial de un usuario (útil para empezar conversación nueva)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM conversations
+                WHERE phone = %s
+            """, (phone,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        
+        except Exception as e:
+            print(f"Error limpiando historial: {e}")
