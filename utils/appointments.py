@@ -277,7 +277,7 @@ class AppointmentManager:
 class ConversationManager:
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
-        self.ensure_table_exist()
+        self.ensure_tables_exist()
     
     def get_connection(self):
         """Crear conexión a la base de datos"""
