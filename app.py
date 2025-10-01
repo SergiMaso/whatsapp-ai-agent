@@ -16,7 +16,15 @@ app = Flask(__name__)
 # Configuración de Twilio
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# Validar que existen las credenciales
+if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+    print("⚠️ ERROR: Variables de Twilio no configuradas")
+    print(f"TWILIO_ACCOUNT_SID: {TWILIO_ACCOUNT_SID}")
+    print(f"TWILIO_AUTH_TOKEN: {TWILIO_AUTH_TOKEN}")
+else:
+    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    print("✅ Cliente Twilio inicializado correctamente")
 
 # Inicializar gestor de citas
 appointment_manager = AppointmentManager()
