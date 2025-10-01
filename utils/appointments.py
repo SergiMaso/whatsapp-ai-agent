@@ -8,18 +8,29 @@ load_dotenv()
 class AppointmentManager:
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
-        self.ensure_table_exists()
+        self.ensure_tables_exist()
     
     def get_connection(self):
         """Crear conexión a la base de datos"""
         return psycopg2.connect(self.database_url)
     
-    def ensure_table_exists(self):
-        """Crear la tabla de citas si no existe"""
+    def ensure_tables_exist(self):
+        """Crear todas las tablas necesarias"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Tabla de mesas
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tables (
+                    id SERIAL PRIMARY KEY,
+                    table_number INTEGER UNIQUE NOT NULL,
+                    capacity INTEGER NOT NULL,
+                    status VARCHAR(20) DEFAULT 'available'
+                )
+            """)
+            
+            # Tabla de reservas
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS appointments (
                     id SERIAL PRIMARY KEY,
@@ -27,7 +38,8 @@ class AppointmentManager:
                     client_name VARCHAR(100),
                     date DATE NOT NULL,
                     time TIME NOT NULL,
-                    service VARCHAR(200),
+                    num_people INTEGER NOT NULL,
+                    table_id INTEGER REFERENCES tables(id),
                     language VARCHAR(10) DEFAULT 'es',
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
@@ -35,40 +47,144 @@ class AppointmentManager:
                 )
             """)
             
+            # Tabla de clientes
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id SERIAL PRIMARY KEY,
+                    phone VARCHAR(50) UNIQUE NOT NULL,
+                    name VARCHAR(100) NOT NULL,
+                    last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Inicializar mesas si no existen
+            cursor.execute("SELECT COUNT(*) FROM tables")
+            if cursor.fetchone()[0] == 0:
+                # Crear 20 mesas de 4 personas (mesas 1-20)
+                for i in range(1, 21):
+                    cursor.execute("""
+                        INSERT INTO tables (table_number, capacity) 
+                        VALUES (%s, 4)
+                    """, (i,))
+                
+                # Crear 8 mesas de 2 personas (mesas 21-28)
+                for i in range(21, 29):
+                    cursor.execute("""
+                        INSERT INTO tables (table_number, capacity) 
+                        VALUES (%s, 2)
+                    """, (i,))
+                
+                print("✅ Mesas inicializadas: 20 de 4 personas, 8 de 2 personas")
+            
             conn.commit()
             cursor.close()
             conn.close()
-            print("✅ Tabla de citas creada/verificada")
+            print("✅ Tablas del restaurante creadas/verificadas")
         
         except Exception as e:
-            print(f"Error creando tabla: {e}")
+            print(f"Error creando tablas: {e}")
     
-    def create_appointment(self, phone, client_name, date, time, service, language='es'):
-        """Crear una nueva cita"""
+    def find_available_table(self, date, time, num_people):
+        """
+        Buscar mesa disponible que se ajuste al número de personas
+        Prioriza mesas del tamaño exacto, luego más grandes
+        """
         try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Buscar mesas ya reservadas en esa fecha/hora
+            cursor.execute("""
+                SELECT table_id 
+                FROM appointments 
+                WHERE date = %s 
+                  AND time = %s 
+                  AND status = 'confirmed'
+            """, (date, time))
+            
+            reserved_table_ids = [row[0] for row in cursor.fetchall()]
+            
+            # Buscar mesa disponible del tamaño adecuado
+            if num_people <= 2:
+                # Buscar mesa de 2 primero
+                cursor.execute("""
+                    SELECT id, table_number, capacity 
+                    FROM tables 
+                    WHERE capacity = 2 
+                      AND id NOT IN %s
+                    ORDER BY table_number
+                    LIMIT 1
+                """, (tuple(reserved_table_ids) if reserved_table_ids else (0,),))
+                
+                result = cursor.fetchone()
+                
+                # Si no hay mesas de 2, buscar de 4
+                if not result:
+                    cursor.execute("""
+                        SELECT id, table_number, capacity 
+                        FROM tables 
+                        WHERE capacity = 4 
+                          AND id NOT IN %s
+                        ORDER BY table_number
+                        LIMIT 1
+                    """, (tuple(reserved_table_ids) if reserved_table_ids else (0,),))
+                    result = cursor.fetchone()
+            else:
+                # Para 3-4 personas, buscar mesa de 4
+                cursor.execute("""
+                    SELECT id, table_number, capacity 
+                    FROM tables 
+                    WHERE capacity >= %s 
+                      AND id NOT IN %s
+                    ORDER BY capacity, table_number
+                    LIMIT 1
+                """, (num_people, tuple(reserved_table_ids) if reserved_table_ids else (0,)))
+                result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if result:
+                return {'id': result[0], 'number': result[1], 'capacity': result[2]}
+            else:
+                return None
+        
+        except Exception as e:
+            print(f"Error buscando mesa: {e}")
+            return None
+    
+    def create_appointment(self, phone, client_name, date, time, num_people, language='es'):
+        """Crear una nueva reserva con asignación de mesa"""
+        try:
+            # Buscar mesa disponible
+            table = self.find_available_table(date, time, num_people)
+            
+            if not table:
+                return None
+            
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
                 INSERT INTO appointments 
-                (phone, client_name, date, time, service, language, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'confirmed')
+                (phone, client_name, date, time, num_people, table_id, language, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed')
                 RETURNING id
-            """, (phone, client_name, date, time, service, language))
+            """, (phone, client_name, date, time, num_people, table['id'], language))
             
             appointment_id = cursor.fetchone()[0]
             conn.commit()
             cursor.close()
             conn.close()
             
-            return appointment_id
+            return {'id': appointment_id, 'table': table}
         
         except Exception as e:
-            print(f"Error creando cita: {e}")
+            print(f"Error creando reserva: {e}")
             return None
     
     def get_appointments(self, phone, from_date=None):
-        """Obtener citas de un usuario"""
+        """Obtener reservas de un usuario"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -77,10 +193,12 @@ class AppointmentManager:
                 from_date = datetime.now().date()
             
             cursor.execute("""
-                SELECT id, client_name, date, time, service, status
-                FROM appointments
-                WHERE phone = %s AND date >= %s
-                ORDER BY date, time
+                SELECT a.id, a.client_name, a.date, a.time, a.num_people, 
+                       t.table_number, t.capacity, a.status
+                FROM appointments a
+                JOIN tables t ON a.table_id = t.id
+                WHERE a.phone = %s AND a.date >= %s
+                ORDER BY a.date, a.time
             """, (phone, from_date))
             
             appointments = cursor.fetchall()
@@ -90,11 +208,11 @@ class AppointmentManager:
             return appointments
         
         except Exception as e:
-            print(f"Error obteniendo citas: {e}")
+            print(f"Error obteniendo reservas: {e}")
             return []
     
     def cancel_appointment(self, phone, appointment_id):
-        """Cancelar una cita"""
+        """Cancelar una reserva"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -112,9 +230,49 @@ class AppointmentManager:
             return True
         
         except Exception as e:
-            print(f"Error cancelando cita: {e}")
+            print(f"Error cancelando reserva: {e}")
             return False
+    
+    def save_customer_info(self, phone, name):
+        """Guardar información del cliente"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO customers (phone, name, last_visit)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (phone) 
+                DO UPDATE SET name = EXCLUDED.name, last_visit = CURRENT_TIMESTAMP
+            """, (phone, name))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
         
+        except Exception as e:
+            print(f"Error guardando cliente: {e}")
+    
+    def get_customer_name(self, phone):
+        """Obtener nombre de cliente si existe"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name FROM customers WHERE phone = %s
+            """, (phone,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            return result[0] if result else None
+        
+        except Exception as e:
+            print(f"Error obteniendo nombre: {e}")
+            return None
+
 
 class ConversationManager:
     def __init__(self):
@@ -141,7 +299,6 @@ class ConversationManager:
                 )
             """)
             
-            # Crear índice para búsquedas rápidas por teléfono
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_conversations_phone 
                 ON conversations(phone, created_at DESC)
@@ -191,7 +348,6 @@ class ConversationManager:
             cursor.close()
             conn.close()
             
-            # Invertir para que estén en orden cronológico
             return [{"role": role, "content": content} for role, content in reversed(messages)]
         
         except Exception as e:
@@ -199,7 +355,7 @@ class ConversationManager:
             return []
     
     def clear_history(self, phone):
-        """Limpiar historial de un usuario (útil para empezar conversación nueva)"""
+        """Limpiar historial de un usuario"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
