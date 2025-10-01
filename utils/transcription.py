@@ -1,10 +1,9 @@
-import openai
 import requests
 import os
 from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
-openai.api_key = os.getenv('OPENAI_API_KEY')
 
 def transcribe_audio(audio_url, auth_header):
     """
@@ -22,12 +21,15 @@ def transcribe_audio(audio_url, auth_header):
         with open(audio_path, 'wb') as f:
             f.write(response.content)
         
+        # Inicializar cliente OpenAI
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
         # Transcribir con Whisper
         with open(audio_path, 'rb') as audio_file:
-            transcript = openai.audio.transcriptions.create(
+            transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language="es"  # Puedes usar None para auto-detectar
+                language="es"
             )
         
         # Limpiar archivo temporal
