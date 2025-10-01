@@ -1,11 +1,10 @@
-import openai
 import os
 import json
 from langdetect import detect, LangDetectException
 from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
-openai.api_key = os.getenv('OPENAI_API_KEY')
 
 def detect_language(text):
     """Detectar el idioma del texto"""
@@ -13,7 +12,7 @@ def detect_language(text):
         lang = detect(text)
         return lang
     except LangDetectException:
-        return 'es'  # Default español
+        return 'es'
 
 def process_message_with_ai(message, phone, appointment_manager):
     """
@@ -60,8 +59,11 @@ INSTRUCCIONES:
 SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médica, Revisión"""
 
     try:
+        # Inicializar cliente OpenAI
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
         # Llamada a GPT-4 con function calling
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4-turbo-preview",
             messages=[
                 {"role": "system", "content": system_prompt},
