@@ -82,6 +82,12 @@ INFORMACIÓN DEL RESTAURANTE:
   * Cena: 19:00 a 22:00 (última reserva)
 - Solo aceptamos reservas en estos horarios
 
+CAPACIDADES:
+1. Agendar nuevas reservas (necesitas: nombre, fecha, hora, número de personas)
+2. Consultar reservas existentes
+3. Cancelar reservas (necesitas el ID de la reserva)
+4. Responder preguntas generales
+
 PROCESO DE RESERVA:
 1. Saluda cordialmente
 2. Pregunta para cuántas personas (1-8 personas máximo)
@@ -90,19 +96,18 @@ PROCESO DE RESERVA:
 5. Pregunta el nombre (si no lo tienes guardado)
 6. Confirma todos los detalles antes de crear la reserva
 
-VALIDACIONES IMPORTANTES:
-- Solo acepta reservas dentro de los horarios permitidos
-- Si piden hora fuera de horario, sugiere alternativas
-- Mínimo 1 persona, máximo 8 personas por reserva
-- Verifica disponibilidad antes de confirmar
+PROCESO DE CANCELACIÓN:
+1. Primero muestra las reservas del usuario con list_appointments
+2. Pide que indiquen qué reserva quieren cancelar
+3. Usa cancel_appointment con el ID correcto
 
 INSTRUCCIONES:
 - Mantén contexto de la conversación anterior
 - Sé cálido, profesional y cercano
 - Si ya conoces al cliente, salúdalo por su nombre
 - Usa lenguaje natural del idioma del usuario
-- Si dice "empezar de nuevo" o "cancelar", olvida la conversación
-- Cuando tengas TODOS los datos (nombre, fecha, hora, num_people), usa create_appointment"""
+- Si dice "empezar de nuevo", olvida la conversación
+- Cuando tengas TODOS los datos, usa las funciones apropiadas"""
 
     try:
         # Obtener historial de conversación
@@ -155,6 +160,23 @@ INSTRUCCIONES:
                     "function": {
                         "name": "list_appointments",
                         "description": "Listar las reservas del usuario"
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "cancel_appointment",
+                        "description": "Cancelar una reserva existente del usuario",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "appointment_id": {
+                                    "type": "integer",
+                                    "description": "ID de la reserva a cancelar"
+                                }
+                            },
+                            "required": ["appointment_id"]
+                        }
                     }
                 }
             ],
@@ -252,7 +274,27 @@ INSTRUCCIONES:
                     
                     for apt in appointments:
                         apt_id, name, date, time, num_people, table_num, table_cap, status = apt
-                        assistant_reply += f"• {date} a las {time}\n  {num_people} personas - Mesa {table_num}\n  {name} - {status}\n\n"
+                        assistant_reply += f"ID: {apt_id}\n• {date} a las {time}\n  {num_people} personas - Mesa {table_num}\n  {name} - {status}\n\n"
+            
+            elif function_name == "cancel_appointment":
+                apt_id = function_args.get('appointment_id')
+                success = appointment_manager.cancel_appointment(phone, apt_id)
+                
+                if success:
+                    cancel_msgs = {
+                        'es': "✅ Reserva cancelada correctamente.",
+                        'ca': "✅ Reserva cancel·lada correctament.",
+                        'en': "✅ Reservation cancelled successfully."
+                    }
+                    assistant_reply = cancel_msgs.get(language, cancel_msgs['es'])
+                else:
+                    error_msgs = {
+                        'es': "❌ No se pudo cancelar la reserva. Verifica el ID de la reserva.",
+                        'ca': "❌ No s'ha pogut cancel·lar la reserva. Verifica l'ID de la reserva.",
+                        'en': "❌ Could not cancel the reservation. Please verify the reservation ID."
+                    }
+                    assistant_reply = error_msgs.get(language, error_msgs['es'])
+        
         else:
             assistant_reply = message_response.content
         
@@ -261,7 +303,7 @@ INSTRUCCIONES:
         conversation_manager.save_message(phone, "assistant", assistant_reply)
         
         # Detectar si el usuario quiere empezar de nuevo
-        restart_keywords = ["empezar de nuevo", "cancelar", "olvidar", "reiniciar", "start over", "començar de nou"]
+        restart_keywords = ["empezar de nuevo", "olvidar", "reiniciar", "start over", "començar de nou"]
         if any(word in message.lower() for word in restart_keywords):
             conversation_manager.clear_history(phone)
         
