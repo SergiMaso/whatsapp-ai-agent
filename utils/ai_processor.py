@@ -59,6 +59,14 @@ INSTRUCCIONES:
 SERVICIOS DISPONIBLES: Corte de pelo, Manicure, Pedicure, Masaje, Consulta médica, Revisión"""
 
     try:
+        
+        print(f"🔍 Intentando procesar mensaje: {message}")
+        print(f"🔍 API Key configurada: {os.getenv('OPENAI_API_KEY')[:20]}...")
+        
+        # Inicializar cliente OpenAI
+        print("🔍 Inicializando cliente OpenAI...")
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        print("✅ Cliente OpenAI inicializado")
         # Inicializar cliente OpenAI
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
