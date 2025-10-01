@@ -283,34 +283,91 @@ class ConversationManager:
         """Crear conexión a la base de datos"""
         return psycopg2.connect(self.database_url)
     
-    def ensure_table_exists(self):
-        """Crear la tabla de conversaciones si no existe"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id SERIAL PRIMARY KEY,
-                    phone VARCHAR(50) NOT NULL,
-                    role VARCHAR(20) NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_conversations_phone 
-                ON conversations(phone, created_at DESC)
-            """)
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print("✅ Tabla de conversaciones creada/verificada")
+def ensure_tables_exist(self):
+    """Crear todas las tablas necesarias"""
+    try:
+        conn = self.get_connection()
+        cursor = conn.cursor()
         
-        except Exception as e:
-            print(f"Error creando tabla de conversaciones: {e}")
+        # Tabla de mesas
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tables (
+                id SERIAL PRIMARY KEY,
+                table_number INTEGER UNIQUE NOT NULL,
+                capacity INTEGER NOT NULL,
+                status VARCHAR(20) DEFAULT 'available'
+            )
+        """)
+        
+        # Tabla de reservas
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS appointments (
+                id SERIAL PRIMARY KEY,
+                phone VARCHAR(50) NOT NULL,
+                client_name VARCHAR(100),
+                date DATE NOT NULL,
+                time TIME NOT NULL,
+                language VARCHAR(10) DEFAULT 'es',
+                status VARCHAR(20) DEFAULT 'confirmed',
+                reminder_sent BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Verificar si existen las columnas nuevas
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='appointments'
+        """)
+        
+        existing_columns = [row[0] for row in cursor.fetchall()]
+        
+        # Agregar num_people si no existe
+        if 'num_people' not in existing_columns:
+            cursor.execute("ALTER TABLE appointments ADD COLUMN num_people INTEGER DEFAULT 2")
+            print("✅ Columna num_people agregada")
+        
+        # Agregar table_id si no existe
+        if 'table_id' not in existing_columns:
+            cursor.execute("ALTER TABLE appointments ADD COLUMN table_id INTEGER REFERENCES tables(id)")
+            print("✅ Columna table_id agregada")
+        
+        # Eliminar service si existe
+        if 'service' in existing_columns:
+            cursor.execute("ALTER TABLE appointments DROP COLUMN service")
+            print("✅ Columna service eliminada")
+        
+        conn.commit()
+        
+        # Tabla de clientes
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id SERIAL PRIMARY KEY,
+                phone VARCHAR(50) UNIQUE NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Inicializar mesas si no existen
+        cursor.execute("SELECT COUNT(*) FROM tables")
+        if cursor.fetchone()[0] == 0:
+            for i in range(1, 21):
+                cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 4)", (i,))
+            
+            for i in range(21, 29):
+                cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 2)", (i,))
+            
+            print("✅ Mesas inicializadas: 20 de 4 personas, 8 de 2 personas")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("✅ Tablas del restaurante creadas/verificadas")
+    
+    except Exception as e:
+        print(f"Error creando tablas: {e}")
     
     def save_message(self, phone, role, content):
         """Guardar un mensaje en el historial"""
