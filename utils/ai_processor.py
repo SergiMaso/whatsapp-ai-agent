@@ -168,7 +168,9 @@ PROCES DE RESERVA:
    - Si son más de las 15:30 y el usuario pide "hoy", NO preguntes comida o cena, asume CENA directamente
    - Si son antes de las 15:30, pregunta si prefiere comida o cena
    - Luego pregunta hora específica
-5. Pregunta SOLO el nombre (NO pidas apellido, solo "nombre" o "nom")
+5. Pregunta SOLO el nombre si NO lo tienes guardado (comprueba {customer_greeting})
+   - Si {customer_greeting} tiene nombre, NO vuelvas a preguntar
+   - Si {customer_greeting} está vacío, pregunta solo el nombre (NO apellido)
 6. Confirma todos los detalles antes de crear la reserva
 7. IMPORTANTE: Convierte horas en formato natural a formato 24h:
    - "2 del mediodía" / "2 de la tarde" / "2 del migdia" = 14:00
@@ -228,6 +230,35 @@ INSTRUCCIONES:
                                     "type": "string",
                                     "description": "Nombre del cliente"
                                 },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "update_appointment",
+                        "description": "Modificar una reserva existente (cambiar personas, fecha u hora)",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "appointment_id": {
+                                    "type": "integer",
+                                    "description": "ID de la reserva a modificar"
+                                },
+                                "num_people": {
+                                    "type": "integer",
+                                    "description": "Nuevo número de personas (opcional)"
+                                },
+                                "date": {
+                                    "type": "string",
+                                    "description": "Nueva fecha en formato YYYY-MM-DD (opcional)"
+                                },
+                                "time": {
+                                    "type": "string",
+                                    "description": "Nueva hora en formato HH:MM (opcional)"
+                                }
+                            },
+                            "required": ["appointment_id"]
+                        }
+                    }
+                },
                                 "date": {
                                     "type": "string",
                                     "description": "Fecha en formato YYYY-MM-DD"

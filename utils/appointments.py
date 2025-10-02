@@ -213,8 +213,8 @@ class AppointmentManager:
             print(f"Error creando reserva: {e}")
             return None
     
-    def get_appointments(self, phone, from_date=None):
-        """Obtener reservas de un usuario"""
+    def get_appointments(self, phone, from_date=None, include_cancelled=False):
+        """Obtener reservas de un usuario (solo confirmadas por defecto)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -222,14 +222,26 @@ class AppointmentManager:
             if from_date is None:
                 from_date = datetime.now().date()
             
-            cursor.execute("""
-                SELECT a.id, a.client_name, a.date, a.time, a.num_people, 
-                       t.table_number, t.capacity, a.status
-                FROM appointments a
-                JOIN tables t ON a.table_id = t.id
-                WHERE a.phone = %s AND a.date >= %s
-                ORDER BY a.date, a.time
-            """, (phone, from_date))
+            if include_cancelled:
+                # Incluir todas las reservas
+                cursor.execute("""
+                    SELECT a.id, a.client_name, a.date, a.time, a.num_people, 
+                           t.table_number, t.capacity, a.status
+                    FROM appointments a
+                    JOIN tables t ON a.table_id = t.id
+                    WHERE a.phone = %s AND a.date >= %s
+                    ORDER BY a.date, a.time
+                """, (phone, from_date))
+            else:
+                # Solo reservas confirmadas
+                cursor.execute("""
+                    SELECT a.id, a.client_name, a.date, a.time, a.num_people, 
+                           t.table_number, t.capacity, a.status
+                    FROM appointments a
+                    JOIN tables t ON a.table_id = t.id
+                    WHERE a.phone = %s AND a.date >= %s AND a.status = 'confirmed'
+                    ORDER BY a.date, a.time
+                """, (phone, from_date))
             
             appointments = cursor.fetchall()
             cursor.close()
@@ -376,6 +388,57 @@ class AppointmentManager:
         
         except Exception as e:
             print(f"Error decrementando contador: {e}")
+    
+    def update_appointment(self, phone, appointment_id, **kwargs):
+        """Actualizar una reserva existente (num_people, date, time, etc.)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Construir query dinámica según los campos a actualizar
+            fields = []
+            values = []
+            
+            if 'num_people' in kwargs:
+                fields.append("num_people = %s")
+                values.append(kwargs['num_people'])
+            
+            if 'date' in kwargs:
+                fields.append("date = %s")
+                values.append(kwargs['date'])
+            
+            if 'time' in kwargs:
+                fields.append("time = %s")
+                values.append(kwargs['time'])
+            
+            if 'client_name' in kwargs:
+                fields.append("client_name = %s")
+                values.append(kwargs['client_name'])
+            
+            if not fields:
+                return False
+            
+            # Agregar phone y appointment_id al final
+            values.extend([appointment_id, phone])
+            
+            query = f"""
+                UPDATE appointments
+                SET {', '.join(fields)}
+                WHERE id = %s AND phone = %s AND status = 'confirmed'
+            """
+            
+            cursor.execute(query, values)
+            rows_affected = cursor.rowcount
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return rows_affected > 0
+        
+        except Exception as e:
+            print(f"Error actualizando reserva: {e}")
+            return False
     
     def get_customer_name(self, phone):
         """Obtener nombre de cliente si existe"""
