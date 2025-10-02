@@ -54,6 +54,15 @@ def set_conversation_state(phone, key, value):
         conversation_states[phone] = {}
     conversation_states[phone][key] = value
 
+def get_conversation_language(phone):
+    """Obtener idioma de la conversación actual"""
+    state = get_conversation_state(phone)
+    return state.get('language', 'ca')  # Default catalán
+
+def set_conversation_language(phone, language):
+    """Guardar idioma de la conversación"""
+    set_conversation_state(phone, 'language', language)
+
 def clear_conversation_state(phone):
     """Limpiar estado de la conversación"""
     if phone in conversation_states:

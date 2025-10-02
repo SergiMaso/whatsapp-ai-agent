@@ -57,11 +57,19 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     Procesar mensaje con GPT-4 usando historial de conversación
     """
     
+    from utils.conversation_state import get_conversation_language, set_conversation_language
+    
     print(f"[DEBUG] Procesando mensaje de {phone}: {message}")
     
-    # Detectar idioma
-    language = detect_language(message)
-    print(f"[DEBUG] Idioma detectado: {language}")
+    # Detectar idioma SOLO si es el primer mensaje o un mensaje largo
+    if len(message) > 15:
+        language = detect_language(message)
+        set_conversation_language(phone, language)
+    else:
+        # Para mensajes cortos, usar el idioma de la conversación
+        language = get_conversation_language(phone)
+    
+    print(f"[DEBUG] Idioma detectado/usado: {language}")
     
     # Mapeo de idiomas
     language_names = {
