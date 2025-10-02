@@ -124,6 +124,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     # Fecha actual para contexto
     today = datetime.now()
     today_str = today.strftime("%Y-%m-%d")
+    current_hour = today.hour
     day_name_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"][today.weekday()]
     day_name_ca = ["dilluns", "dimarts", "dimecres", "dijous", "divendres", "dissabte", "diumenge"][today.weekday()]
     
@@ -139,10 +140,13 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     else:
         customer_greeting = ""
     
+    # Determinar si solo cena está disponible hoy
+    only_dinner_today = current_hour >= 15
+    
     # System prompt para restaurante
     system_prompt = f"""Eres un asistente virtual para reservas de un restaurante.
 
-FECHA ACTUAL: Hoy es {day_name} {today_str} (2 de octubre de 2025).
+FECHA Y HORA ACTUAL: Hoy es {day_name} {today_str} (2 de octubre de 2025), hora actual: {current_hour}:00
 
 IDIOMA: El usuario está escribiendo en {lang_name}. Responde SIEMPRE en {lang_name}.
 {customer_greeting}
@@ -158,19 +162,17 @@ CAPACIDADES:
 1. Agendar nuevas reservas (necesitas: nombre, fecha, hora, número de personas)
 2. Consultar reservas existentes
 3. Cancelar reservas (necesitas el ID de la reserva)
-4. Responder preguntas generales
+4. MODIFICAR reservas existentes (cambiar personas, fecha u hora)
+5. Responder preguntas generales
 
-PROCES DE RESERVA:
+PROCESO DE RESERVA:
 1. Saluda cordialmente
 2. Pregunta para cuántas personas (1-8 personas máximo)
 3. Pregunta qué día (acepta "hoy", "mañana", "el viernes", fechas específicas)
 4. IMPORTANTE - Lógica de horario:
-   - Si son más de las 15:30 y el usuario pide "hoy", NO preguntes comida o cena, asume CENA directamente
-   - Si son antes de las 15:30, pregunta si prefiere comida o cena
+   {"- SOLO CENA: Ya son más de las 15:00, si pide HOY solo acepta CENA (19:00-22:00)" if only_dinner_today else "- Pregunta si prefiere comida (12:00-14:30) o cena (19:00-22:00)"}
    - Luego pregunta hora específica
-5. Pregunta SOLO el nombre si NO lo tienes guardado (comprueba {customer_greeting})
-   - Si {customer_greeting} tiene nombre, NO vuelvas a preguntar
-   - Si {customer_greeting} está vacío, pregunta solo el nombre (NO apellido)
+5. {"NO preguntes el nombre, ya lo tienes guardado: " + customer_name if customer_name else "Pregunta SOLO el nombre (NO apellido)"}
 6. Confirma todos los detalles antes de crear la reserva
 7. IMPORTANTE: Convierte horas en formato natural a formato 24h:
    - "2 del mediodía" / "2 de la tarde" / "2 del migdia" = 14:00
@@ -181,6 +183,15 @@ PROCES DE RESERVA:
    - "las 2" (en contexto de comida) = 14:00
    - "las 8" / "les 8" (en contexto de cena) = 20:00
    - "las 9" / "les 9" (en contexto de cena) = 21:00
+
+PROCESO DE MODIFICACIÓN:
+1. Si el usuario quiere MODIFICAR una reserva (cambiar personas, fecha u hora):
+   - Primero lista sus reservas con list_appointments
+   - Pide que confirme qué reserva modificar (ID)
+   - Pregunta qué quiere cambiar específicamente
+   - Usa update_appointment con el ID y los nuevos datos
+   - Verifica disponibilidad antes de confirmar
+2. NO elimines y crees nueva reserva, usa update_appointment
 
 PROCESO DE CANCELACIÓN:
 1. Primero muestra las reservas del usuario con list_appointments
@@ -197,7 +208,8 @@ INSTRUCCIONES:
 - VALIDA que la hora esté en horario correcto ANTES de llamar a create_appointment
 - NO llames a create_appointment si la hora no está en rango permitido (12:00-14:30 o 19:00-22:00)
 - Convierte siempre el formato de hora natural ("2 del mediodía") a formato 24h (14:00)
-- Si la hora no es válida, pregunta de nuevo sin crear la reserva"""
+- Si la hora no es válida, pregunta de nuevo sin crear la reserva
+- Al listar reservas, SOLO muestra las confirmadas (status='confirmed')"""
 
     try:
         # Obtener historial de conversación
@@ -230,11 +242,28 @@ INSTRUCCIONES:
                                     "type": "string",
                                     "description": "Nombre del cliente"
                                 },
+                                "date": {
+                                    "type": "string",
+                                    "description": "Fecha en formato YYYY-MM-DD"
+                                },
+                                "time": {
+                                    "type": "string",
+                                    "description": "Hora en formato HH:MM (24 horas). Convierte formatos naturales: '2 del mediodía' = 14:00, '8 de la noche' = 20:00"
+                                },
+                                "num_people": {
+                                    "type": "integer",
+                                    "description": "Número de personas (1-8)"
+                                }
+                            },
+                            "required": ["client_name", "date", "time", "num_people"]
+                        }
+                    }
+                },
                 {
                     "type": "function",
                     "function": {
                         "name": "update_appointment",
-                        "description": "Modificar una reserva existente (cambiar personas, fecha u hora)",
+                        "description": "Modificar una reserva existente (cambiar personas, fecha u hora). Verifica disponibilidad antes de modificar.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -259,28 +288,11 @@ INSTRUCCIONES:
                         }
                     }
                 },
-                                "date": {
-                                    "type": "string",
-                                    "description": "Fecha en formato YYYY-MM-DD"
-                                },
-                                "time": {
-                                    "type": "string",
-                                    "description": "Hora en formato HH:MM (24 horas). Convierte formatos naturales: '2 del mediodía' = 14:00, '8 de la noche' = 20:00"
-                                },
-                                "num_people": {
-                                    "type": "integer",
-                                    "description": "Número de personas (1-8)"
-                                }
-                            },
-                            "required": ["client_name", "date", "time", "num_people"]
-                        }
-                    }
-                },
                 {
                     "type": "function",
                     "function": {
                         "name": "list_appointments",
-                        "description": "Listar las reservas del usuario"
+                        "description": "Listar las reservas confirmadas del usuario (solo status='confirmed')"
                     }
                 },
                 {
@@ -375,13 +387,17 @@ INSTRUCCIONES:
                     conversation_manager.save_message(phone, "assistant", assistant_reply)
                     return assistant_reply
                 
-                # Guardar nombre del cliente e incrementar contador
-                appointment_manager.save_customer_info(normalized_phone, function_args.get('client_name'), language)
+                # Usar nombre guardado si existe, sino el del argumento
+                client_name_to_use = customer_name if customer_name else function_args.get('client_name')
+                
+                # Guardar nombre del cliente si es nuevo
+                if not customer_name:
+                    appointment_manager.save_customer_info(normalized_phone, client_name_to_use, language)
                 
                 # Crear la reserva
                 result = appointment_manager.create_appointment(
                     phone=normalized_phone,
-                    client_name=function_args.get('client_name'),
+                    client_name=client_name_to_use,
                     date=function_args.get('date'),
                     time=function_args.get('time'),
                     num_people=num_people,
@@ -396,11 +412,11 @@ INSTRUCCIONES:
                     
                     # Mensajes de confirmación SIMPLES sin emojis problemáticos
                     if language == 'ca':
-                        assistant_reply = f"Reserva confirmada!\n\nNom: {function_args['client_name']}\nPersones: {num_people}\nData: {function_args['date']}\nHora: {function_args['time']}\nTaula: {table_info['number']}\n\nT'esperem!"
+                        assistant_reply = f"Reserva confirmada!\n\nNom: {client_name_to_use}\nPersones: {num_people}\nData: {function_args['date']}\nHora: {function_args['time']}\nTaula: {table_info['number']}\n\nT'esperem!"
                     elif language == 'es':
-                        assistant_reply = f"Reserva confirmada!\n\nNombre: {function_args['client_name']}\nPersonas: {num_people}\nFecha: {function_args['date']}\nHora: {function_args['time']}\nMesa: {table_info['number']}\n\nTe esperamos!"
+                        assistant_reply = f"Reserva confirmada!\n\nNombre: {client_name_to_use}\nPersonas: {num_people}\nFecha: {function_args['date']}\nHora: {function_args['time']}\nMesa: {table_info['number']}\n\nTe esperamos!"
                     else:
-                        assistant_reply = f"Reservation confirmed!\n\nName: {function_args['client_name']}\nPeople: {num_people}\nDate: {function_args['date']}\nTime: {function_args['time']}\nTable: {table_info['number']}\n\nSee you!"
+                        assistant_reply = f"Reservation confirmed!\n\nName: {client_name_to_use}\nPeople: {num_people}\nDate: {function_args['date']}\nTime: {function_args['time']}\nTable: {table_info['number']}\n\nSee you!"
                     
                     conversation_manager.clear_history(phone)
                 else:
@@ -411,6 +427,38 @@ INSTRUCCIONES:
                         'en': f"Sorry, we don't have tables available for {num_people} people on {function_args['date']} at {function_args['time']}. Would you like to try another time?"
                     }
                     assistant_reply = no_tables_msgs.get(language, no_tables_msgs['es'])
+            
+            elif function_name == "update_appointment":
+                apt_id = function_args.get('appointment_id')
+                new_num_people = function_args.get('num_people')
+                new_date = function_args.get('date')
+                new_time = function_args.get('time')
+                
+                print(f"[UPDATE] Modificando reserva {apt_id} - Personas: {new_num_people}, Fecha: {new_date}, Hora: {new_time}")
+                
+                # Actualizar la reserva
+                success = appointment_manager.update_appointment(
+                    phone=normalized_phone,
+                    appointment_id=apt_id,
+                    num_people=new_num_people,
+                    date=new_date,
+                    time=new_time
+                )
+                
+                if success:
+                    update_msgs = {
+                        'es': "Reserva modificada correctamente!",
+                        'ca': "Reserva modificada correctament!",
+                        'en': "Reservation updated successfully!"
+                    }
+                    assistant_reply = update_msgs.get(language, update_msgs['es'])
+                else:
+                    error_msgs = {
+                        'es': "No se pudo modificar la reserva. Puede que no haya disponibilidad para los nuevos datos.",
+                        'ca': "No s'ha pogut modificar la reserva. Pot ser que no hi hagi disponibilitat per les noves dades.",
+                        'en': "Could not update the reservation. There might not be availability for the new details."
+                    }
+                    assistant_reply = error_msgs.get(language, error_msgs['es'])
             
             elif function_name == "list_appointments":
                 appointments = appointment_manager.get_appointments(normalized_phone)
@@ -433,7 +481,8 @@ INSTRUCCIONES:
                     
                     for apt in appointments:
                         apt_id, name, date, time, num_people, table_num, table_cap, status = apt
-                        assistant_reply += f"ID: {apt_id}\n- {date} a las {time}\n  {num_people} personas - Mesa {table_num}\n  {name} - {status}\n\n"
+                        if status == 'confirmed':  # Solo mostrar confirmadas
+                            assistant_reply += f"ID: {apt_id}\n- {date} a las {time}\n  {num_people} personas - Mesa {table_num}\n  {name}\n\n"
             
             elif function_name == "cancel_appointment":
                 apt_id = function_args.get('appointment_id')

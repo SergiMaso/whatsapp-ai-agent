@@ -1,0 +1,55 @@
+[
+    {
+        "type": "function",
+        "function": {
+            "name": "create_appointment",
+            "description": "Crear una reserva SOLO cuando tengas TODOS los datos necesarios Y la hora esté en el rango permitido (12:00-14:30 o 19:00-22:00)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "client_name": {
+                        "type": "string",
+                        "description": "Nombre del cliente"
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Fecha en formato YYYY-MM-DD"
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Hora en formato HH:MM (24 horas)"
+                    },
+                    "num_people": {
+                        "type": "integer",
+                        "description": "Número de personas (1-8)"
+                    }
+                },
+                "required": ["client_name", "date", "time", "num_people"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_appointments",
+            "description": "Listar las reservas del usuario"
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_appointment",
+            "description": "Cancelar una reserva existente del usuario",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "appointment_id": {
+                        "type": "integer",
+                        "description": "ID de la reserva a cancelar"
+                    }
+                },
+                "required": ["appointment_id"]
+            }
+        }
+    }
+]
