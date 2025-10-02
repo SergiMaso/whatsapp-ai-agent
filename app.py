@@ -42,24 +42,24 @@ def whatsapp_webhook():
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
     
-    print(f"📱 Mensaje de {from_number}: {incoming_msg}")
+    print(f"[MSG] Mensaje de {from_number}: {incoming_msg}")
     
     resp = MessagingResponse()
     
     try:
         # Si hay audio, transcribirlo
         if media_url:
-            print(f"🎤 Audio detectado: {media_url}")
+            print(f"[AUDIO] Audio detectado: {media_url}")
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
             auth_header = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
             
             transcribed_text = transcribe_audio(media_url, auth_header)
             
             if transcribed_text:
-                print(f"✅ Audio transcrito: {transcribed_text}")
+                print(f"[OK] Audio transcrito: {transcribed_text}")
                 incoming_msg = transcribed_text
             else:
-                print("❌ Error transcribiendo audio")
+                print("[ERROR] Error transcribiendo audio")
                 resp.message("No pude entender el audio. ¿Puedes escribir tu mensaje?")
                 return str(resp)
         
@@ -73,7 +73,7 @@ def whatsapp_webhook():
         resp.message(ai_response)
     
     except Exception as e:
-        print(f"❌ Error en webhook: {e}")
+        print(f"[ERROR] Error en webhook: {e}")
         import traceback
         traceback.print_exc()
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
