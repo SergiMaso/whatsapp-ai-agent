@@ -10,7 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from dotenv import load_dotenv
 from utils.appointments import AppointmentManager, ConversationManager
 from utils.ai_processor import process_message_with_ai, detect_language
-from utils.conversation_state import should_show_time_buttons, set_conversation_state, get_conversation_state
+from utils.conversation_state import should_show_time_buttons, should_show_only_dinner, set_conversation_state, get_conversation_state
 from utils.telegram_keyboards import (
     get_time_slots_keyboard,
     get_lunch_times_keyboard,
@@ -83,9 +83,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Detectar si debemos mostrar botones de hora
         language = detect_language(user_message)
         if should_show_time_buttons(user_id, user_message, response):
-            logger.info("[BUTTONS] Mostrando botones de horario")
-            keyboard = get_time_slots_keyboard(language)
-            await update.message.reply_text(response, reply_markup=keyboard)
+            # Verificar si solo puede ser cena
+            if should_show_only_dinner(user_message):
+                logger.info("[BUTTONS] Solo cena disponible - Mostrando horarios de cena directamente")
+                keyboard = get_dinner_times_keyboard(language)
+                await update.message.reply_text(response, reply_markup=keyboard)
+            else:
+                logger.info("[BUTTONS] Mostrando botones de horario (comida y cena)")
+                keyboard = get_time_slots_keyboard(language)
+                await update.message.reply_text(response, reply_markup=keyboard)
         else:
             await update.message.reply_text(response)
         
@@ -209,8 +215,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Detectar si debemos mostrar botones
         language = detect_language(transcribed_text)
         if should_show_time_buttons(user_id, transcribed_text, response):
-            keyboard = get_time_slots_keyboard(language)
-            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+            # Verificar si solo puede ser cena
+            if should_show_only_dinner(transcribed_text):
+                keyboard = get_dinner_times_keyboard(language)
+                await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+            else:
+                keyboard = get_time_slots_keyboard(language)
+                await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
         else:
             await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}")
         

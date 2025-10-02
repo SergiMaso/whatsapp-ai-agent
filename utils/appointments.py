@@ -399,19 +399,20 @@ class AppointmentManager:
             fields = []
             values = []
             
-            if 'num_people' in kwargs:
+            # IMPORTANTE: Solo agregar campos que no sean None
+            if 'num_people' in kwargs and kwargs['num_people'] is not None:
                 fields.append("num_people = %s")
                 values.append(kwargs['num_people'])
             
-            if 'date' in kwargs:
+            if 'date' in kwargs and kwargs['date'] is not None:
                 fields.append("date = %s")
                 values.append(kwargs['date'])
             
-            if 'time' in kwargs:
+            if 'time' in kwargs and kwargs['time'] is not None:
                 fields.append("time = %s")
                 values.append(kwargs['time'])
             
-            if 'client_name' in kwargs:
+            if 'client_name' in kwargs and kwargs['client_name'] is not None:
                 fields.append("client_name = %s")
                 values.append(kwargs['client_name'])
             

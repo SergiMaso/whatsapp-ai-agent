@@ -2,6 +2,8 @@
 Contexto de conversación para detectar cuándo mostrar botones
 """
 
+from datetime import datetime
+
 # Estado temporal de conversaciones (en memoria)
 # En producción esto debería estar en la BD
 conversation_states = {}
@@ -41,6 +43,26 @@ def should_show_time_buttons(phone, message, ai_response):
             
             if not has_time:
                 return True
+    
+    return False
+
+def should_show_only_dinner(message):
+    """
+    Detectar si solo se deben mostrar horarios de cena
+    Retorna True si:
+    - Son más de las 15:00 Y
+    - El usuario pide reserva para "hoy" o "avui" o "today"
+    """
+    current_hour = datetime.now().hour
+    
+    # Si son más de las 15:00
+    if current_hour >= 15:
+        message_lower = message.lower()
+        today_keywords = ['hoy', 'avui', 'today', "d'avui", 'de hoy']
+        
+        # Verificar si el mensaje menciona "hoy"
+        if any(keyword in message_lower for keyword in today_keywords):
+            return True
     
     return False
 
