@@ -186,7 +186,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language="es"
+                language="ca"  # Català per defecte
             )
         
         transcribed_text = transcript.text

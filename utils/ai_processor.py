@@ -10,16 +10,31 @@ load_dotenv()
 def detect_language(text):
     """Detectar el idioma del texto con mejor soporte para catalán"""
     try:
+        # Si el texto es muy corto (sí, no, ok, etc), no detectar
+        if len(text.strip()) <= 3:
+            return 'ca'  # Default catalán para respuestas cortas
+        
         lang = detect(text)
         
         # Palabras clave catalanas para mejorar detección
         catalan_keywords = ['vull', 'necessito', 'puc', 'tinc', 'avui', 'demà', 'sisplau', 
                            'gràcies', 'bon dia', 'bona tarda', 'bona nit', 'hola', 'adéu', 'taula',
                            'persones', 'reserva', 'dinar', 'sopar', 'voldria', 'podria',
-                           'estava', 'pensant', 'gust', 'nom', 'estic', 'volia']
+                           'estava', 'pensant', 'gust', 'nom', 'estic', 'volia', 'cognom',
+                           'pots', 'podem', 'vol', 'fer', 'una', 'quatre']
+        
+        # Palabras que indican español inequívocamente
+        spanish_keywords = ['quiero', 'necesito', 'puedo', 'tengo', 'hoy', 'mañana', 'por favor',
+                          'gracias', 'buenos días', 'buenas tardes', 'adiós', 'mesa',
+                          'personas', 'comer', 'cenar', 'quería', 'podría', 'apellido']
         
         text_lower = text.lower()
         catalan_count = sum(1 for word in catalan_keywords if word in text_lower)
+        spanish_count = sum(1 for word in spanish_keywords if word in text_lower)
+        
+        # Si tiene palabras españolas claras, es español
+        if spanish_count >= 2:
+            return 'es'
         
         # Si tiene 2 o más palabras catalanas, es catalán
         if catalan_count >= 2:
@@ -29,9 +44,13 @@ def detect_language(text):
         if catalan_count >= 1 and lang != 'es':
             return 'ca'
         
+        # Si langdetect dice catalán, confiar
+        if lang == 'ca':
+            return 'ca'
+        
         return lang
     except LangDetectException:
-        return 'es'
+        return 'ca'  # Default catalán si falla
 
 def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
@@ -99,21 +118,22 @@ CAPACIDADES:
 3. Cancelar reservas (necesitas el ID de la reserva)
 4. Responder preguntas generales
 
-PROCESO DE RESERVA:
+PROCES DE RESERVA:
 1. Saluda cordialmente
 2. Pregunta para cuántas personas (1-8 personas máximo)
 3. Pregunta qué día (acepta "hoy", "mañana", "el viernes", fechas específicas)
 4. Pregunta horario preferido y hora específica
-5. Pregunta el nombre (si no lo tienes guardado)
+5. Pregunta el nombre COMPLETO (si no lo tienes guardado): Pide "Nombre y apellido" o "Nom i cognom"
 6. Confirma todos los detalles antes de crear la reserva
 7. IMPORTANTE: Convierte horas en formato natural a formato 24h:
-   - "2 del mediodía" / "2 de la tarde" = 14:00
-   - "2 de la noche" = 02:00 (inválido para restaurante)
+   - "2 del mediodía" / "2 de la tarde" / "2 del migdia" = 14:00
+   - "9 de la noche" / "9 del vespre" = 21:00
    - "8 de la noche" / "8 pm" = 20:00
    - "1 del mediodía" = 13:00
-   - "medio día" / "12 del mediodía" = 12:00
+   - "medio día" / "12 del mediodía" / "migdia" = 12:00
    - "las 2" (en contexto de comida) = 14:00
-   - "las 8" (en contexto de cena) = 20:00
+   - "las 8" / "les 8" (en contexto de cena) = 20:00
+   - "las 9" / "les 9" (en contexto de cena) = 21:00
 
 PROCESO DE CANCELACIÓN:
 1. Primero muestra las reservas del usuario con list_appointments
