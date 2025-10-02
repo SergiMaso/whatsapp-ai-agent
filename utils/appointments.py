@@ -53,21 +53,39 @@ class AppointmentManager:
                     id SERIAL PRIMARY KEY,
                     phone VARCHAR(50) UNIQUE NOT NULL,
                     name VARCHAR(100),
-                    language VARCHAR(10) DEFAULT 'ca',
+                    language VARCHAR(10) DEFAULT 'es',
+                    reservation_count INTEGER DEFAULT 0,
                     last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
-            # Verificar si existe la columna language
+            # Verificar y agregar columnas faltantes
             cursor.execute("""
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name='customers' AND column_name='language'
+                WHERE table_name='customers'
             """)
             
-            if not cursor.fetchone():
-                cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10) DEFAULT 'ca'")
-                print("✅ Columna language agregada a customers")
+            existing_columns = [row[0] for row in cursor.fetchall()]
+            
+            # Agregar language si no existe
+            if 'language' not in existing_columns:
+                cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10) DEFAULT 'es'")
+                print("Columna language agregada")
+            else:
+                # Cambiar default de 'ca' a 'es'
+                cursor.execute("ALTER TABLE customers ALTER COLUMN language SET DEFAULT 'es'")
+            
+            # Agregar reservation_count si no existe
+            if 'reservation_count' not in existing_columns:
+                cursor.execute("ALTER TABLE customers ADD COLUMN reservation_count INTEGER DEFAULT 0")
+                print("Columna reservation_count agregada")
+            
+            # Asegurar que name puede ser NULL
+            try:
+                cursor.execute("ALTER TABLE customers ALTER COLUMN name DROP NOT NULL")
+            except:
+                pass  # Ya es nullable
             
             # Inicializar mesas si no existen
             cursor.execute("SELECT COUNT(*) FROM tables")
@@ -320,6 +338,44 @@ class AppointmentManager:
         
         except Exception as e:
             print(f"Error actualizando idioma: {e}")
+    
+    def increment_reservation_count(self, phone):
+        """Incrementar contador de reservas del cliente"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE customers
+                SET reservation_count = reservation_count + 1
+                WHERE phone = %s
+            """, (phone,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        
+        except Exception as e:
+            print(f"Error incrementando contador: {e}")
+    
+    def decrement_reservation_count(self, phone):
+        """Decrementar contador de reservas del cliente"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE customers
+                SET reservation_count = GREATEST(reservation_count - 1, 0)
+                WHERE phone = %s
+            """, (phone,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        
+        except Exception as e:
+            print(f"Error decrementando contador: {e}")
     
     def get_customer_name(self, phone):
         """Obtener nombre de cliente si existe"""

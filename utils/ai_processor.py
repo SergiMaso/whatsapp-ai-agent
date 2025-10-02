@@ -57,19 +57,24 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     Procesar mensaje con GPT-4 usando historial de conversación
     """
     
-    print(f"[DEBUG] Procesando mensaje de {phone}: {message}")
+    from utils.phone_utils import normalize_phone_number
+    
+    # Normalizar teléfono (quitar telegram:/whatsapp:)
+    normalized_phone = normalize_phone_number(phone)
+    
+    print(f"[DEBUG] Procesando mensaje de {normalized_phone}: {message}")
     
     # 1. Obtener idioma guardado en BD
-    saved_language = appointment_manager.get_customer_language(phone)
+    saved_language = appointment_manager.get_customer_language(normalized_phone)
     
     # 2. Detectar si el usuario pide cambiar idioma
     language_change_keywords = {
         'en': ['english', 'in english', 'speak english', 'english please'],
-        'es': ['español', 'castellano', 'en español', 'en castellano', 'habla español'],
-        'ca': ['català', 'en català', 'parla català'],
-        'fr': ['français', 'en français', 'parle français'],
-        'de': ['deutsch', 'auf deutsch'],
-        'it': ['italiano', 'in italiano']
+        'es': ['español', 'castellano', 'en español', 'en castellano', 'habla español', 'spanish', 'castellan'],
+        'ca': ['català', 'en català', 'parla català', 'catalan'],
+        'fr': ['français', 'en français', 'parle français', 'french'],
+        'de': ['deutsch', 'auf deutsch', 'german'],
+        'it': ['italiano', 'in italiano', 'italian']
     }
     
     message_lower = message.lower()
@@ -79,16 +84,22 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         if any(keyword in message_lower for keyword in keywords):
             language_requested = lang
             print(f"[LANG] Usuario pide cambiar a: {lang}")
-            appointment_manager.update_customer_language(phone, lang)
+            appointment_manager.update_customer_language(normalized_phone, lang)
             saved_language = lang
             break
     
-    # 3. Si no hay idioma guardado, detectar del primer mensaje
+    # 3. Si no hay idioma guardado, detectar del mensaje
     if not saved_language:
-        detected_lang = detect_language(message)
-        print(f"[LANG] Primer mensaje - detectado: {detected_lang}")
-        appointment_manager.save_customer_info(phone, None, detected_lang)
-        language = detected_lang
+        # Si solo dice "Hola" o "Hello" o similar, usar default y esperar
+        if len(message.strip()) <= 10 and message.lower() in ['hola', 'hello', 'hi', 'hey', 'bon dia', 'bona tarda']:
+            language = 'es'  # Default español, esperamos al siguiente mensaje
+            print(f"[LANG] Saludo corto - usando default: es (sin guardar)")
+        else:
+            # Mensaje más largo, detectar idioma
+            detected_lang = detect_language(message)
+            print(f"[LANG] Primer mensaje - detectado: {detected_lang}")
+            appointment_manager.save_customer_info(normalized_phone, None, detected_lang)
+            language = detected_lang
     else:
         language = saved_language
     
@@ -108,7 +119,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     lang_name = language_names.get(language, 'español')
     
     # Verificar si el cliente ya existe
-    customer_name = appointment_manager.get_customer_name(phone)
+    customer_name = appointment_manager.get_customer_name(normalized_phone)
     
     # Fecha actual para contexto
     today = datetime.now()
@@ -153,8 +164,11 @@ PROCES DE RESERVA:
 1. Saluda cordialmente
 2. Pregunta para cuántas personas (1-8 personas máximo)
 3. Pregunta qué día (acepta "hoy", "mañana", "el viernes", fechas específicas)
-4. Pregunta horario preferido y hora específica
-5. Pregunta el nombre COMPLETO (si no lo tienes guardado): Pide "Nombre y apellido" o "Nom i cognom"
+4. IMPORTANTE - Lógica de horario:
+   - Si son más de las 15:30 y el usuario pide "hoy", NO preguntes comida o cena, asume CENA directamente
+   - Si son antes de las 15:30, pregunta si prefiere comida o cena
+   - Luego pregunta hora específica
+5. Pregunta SOLO el nombre (NO pidas apellido, solo "nombre" o "nom")
 6. Confirma todos los detalles antes de crear la reserva
 7. IMPORTANTE: Convierte horas en formato natural a formato 24h:
    - "2 del mediodía" / "2 de la tarde" / "2 del migdia" = 14:00
@@ -330,12 +344,12 @@ INSTRUCCIONES:
                     conversation_manager.save_message(phone, "assistant", assistant_reply)
                     return assistant_reply
                 
-                # Guardar nombre del cliente
-                appointment_manager.save_customer_info(phone, function_args.get('client_name'), language)
+                # Guardar nombre del cliente e incrementar contador
+                appointment_manager.save_customer_info(normalized_phone, function_args.get('client_name'), language)
                 
                 # Crear la reserva
                 result = appointment_manager.create_appointment(
-                    phone=phone,
+                    phone=normalized_phone,
                     client_name=function_args.get('client_name'),
                     date=function_args.get('date'),
                     time=function_args.get('time'),
@@ -344,6 +358,8 @@ INSTRUCCIONES:
                 )
                 
                 if result:
+                    # Incrementar contador de reservas
+                    appointment_manager.increment_reservation_count(normalized_phone)
                     table_info = result['table']
                     print(f"[OK] Reserva creada exitosamente - Mesa {table_info['number']}")
                     
@@ -366,7 +382,7 @@ INSTRUCCIONES:
                     assistant_reply = no_tables_msgs.get(language, no_tables_msgs['es'])
             
             elif function_name == "list_appointments":
-                appointments = appointment_manager.get_appointments(phone)
+                appointments = appointment_manager.get_appointments(normalized_phone)
                 
                 if not appointments:
                     no_apts = {
@@ -390,9 +406,12 @@ INSTRUCCIONES:
             
             elif function_name == "cancel_appointment":
                 apt_id = function_args.get('appointment_id')
-                success = appointment_manager.cancel_appointment(phone, apt_id)
+                success = appointment_manager.cancel_appointment(normalized_phone, apt_id)
                 
                 if success:
+                    # Decrementar contador de reservas
+                    appointment_manager.decrement_reservation_count(normalized_phone)
+                    
                     cancel_msgs = {
                         'es': "Reserva cancelada correctamente.",
                         'ca': "Reserva cancel·lada correctament.",
