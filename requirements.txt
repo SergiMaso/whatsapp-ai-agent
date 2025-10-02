@@ -8,3 +8,4 @@ requests==2.31.0
 langdetect==1.0.9
 APScheduler==3.10.4
 gunicorn==21.2.0
+python-telegram-bot==21.0.1
