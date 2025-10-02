@@ -38,6 +38,8 @@ def home():
 def whatsapp_webhook():
     """Endpoint principal que recibe mensajes de WhatsApp"""
     
+    print(f"[WEBHOOK] Recibida peticion POST a /whatsapp")
+    
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
@@ -88,7 +90,13 @@ def whatsapp_webhook():
         traceback.print_exc()
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
     
-    return str(resp)
+    # Log de la respuesta TwiML completa
+    twiml_response = str(resp)
+    print(f"[TWIML] Respuesta completa ({len(twiml_response)} chars): {twiml_response}")
+    
+    # Asegurar que Flask devuelva XML con el content-type correcto
+    from flask import Response
+    return Response(twiml_response, mimetype='text/xml')
 
 @app.route('/health')
 def health():
