@@ -57,36 +57,42 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     Procesar mensaje con GPT-4 usando historial de conversación
     """
     
-    from utils.conversation_state import get_conversation_language, set_conversation_language
-    
     print(f"[DEBUG] Procesando mensaje de {phone}: {message}")
     
-    # Detectar idioma del mensaje
-    detected_lang = detect_language(message)
+    # 1. Obtener idioma guardado en BD
+    saved_language = appointment_manager.get_customer_language(phone)
     
-    # Obtener idioma de la conversación anterior
-    previous_lang = get_conversation_language(phone)
+    # 2. Detectar si el usuario pide cambiar idioma
+    language_change_keywords = {
+        'en': ['english', 'in english', 'speak english', 'english please'],
+        'es': ['español', 'castellano', 'en español', 'en castellano', 'habla español'],
+        'ca': ['català', 'en català', 'parla català'],
+        'fr': ['français', 'en français', 'parle français'],
+        'de': ['deutsch', 'auf deutsch'],
+        'it': ['italiano', 'in italiano']
+    }
     
-    # Lógica de decisión:
-    # - Si el mensaje es largo (>15 chars): usar idioma detectado
-    # - Si el mensaje es corto (<= 15 chars): mantener idioma anterior
-    # - Si no hay idioma anterior: usar el detectado
+    message_lower = message.lower()
+    language_requested = None
     
-    if len(message) > 15:
-        # Mensaje largo: confiar en la detección
+    for lang, keywords in language_change_keywords.items():
+        if any(keyword in message_lower for keyword in keywords):
+            language_requested = lang
+            print(f"[LANG] Usuario pide cambiar a: {lang}")
+            appointment_manager.update_customer_language(phone, lang)
+            saved_language = lang
+            break
+    
+    # 3. Si no hay idioma guardado, detectar del primer mensaje
+    if not saved_language:
+        detected_lang = detect_language(message)
+        print(f"[LANG] Primer mensaje - detectado: {detected_lang}")
+        appointment_manager.save_customer_info(phone, None, detected_lang)
         language = detected_lang
-        set_conversation_language(phone, language)
     else:
-        # Mensaje corto: mantener idioma de la conversación
-        if previous_lang and previous_lang != 'ca':  # Si ya tenía un idioma guardado (no default)
-            language = previous_lang
-        else:
-            # Primera vez o default: detectar
-            language = detected_lang
-            if detected_lang in ['es', 'en', 'fr', 'de', 'it']:  # Idiomas válidos
-                set_conversation_language(phone, language)
+        language = saved_language
     
-    print(f"[DEBUG] Idioma: detectado={detected_lang}, anterior={previous_lang}, usado={language}")
+    print(f"[DEBUG] Idioma usado: {language}")
     
     # Mapeo de idiomas
     language_names = {
@@ -325,7 +331,7 @@ INSTRUCCIONES:
                     return assistant_reply
                 
                 # Guardar nombre del cliente
-                appointment_manager.save_customer_info(phone, function_args.get('client_name'))
+                appointment_manager.save_customer_info(phone, function_args.get('client_name'), language)
                 
                 # Crear la reserva
                 result = appointment_manager.create_appointment(

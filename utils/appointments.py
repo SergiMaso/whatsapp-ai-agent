@@ -52,10 +52,22 @@ class AppointmentManager:
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
                     phone VARCHAR(50) UNIQUE NOT NULL,
-                    name VARCHAR(100) NOT NULL,
+                    name VARCHAR(100),
+                    language VARCHAR(10) DEFAULT 'ca',
                     last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Verificar si existe la columna language
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='customers' AND column_name='language'
+            """)
+            
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10) DEFAULT 'ca'")
+                print("✅ Columna language agregada a customers")
             
             # Inicializar mesas si no existen
             cursor.execute("SELECT COUNT(*) FROM tables")
@@ -233,18 +245,32 @@ class AppointmentManager:
             print(f"Error cancelando reserva: {e}")
             return False
     
-    def save_customer_info(self, phone, name):
-        """Guardar información del cliente"""
+    def save_customer_info(self, phone, name, language='ca'):
+        """Guardar información del cliente incluyendo idioma"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                INSERT INTO customers (phone, name, last_visit)
-                VALUES (%s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (phone) 
-                DO UPDATE SET name = EXCLUDED.name, last_visit = CURRENT_TIMESTAMP
-            """, (phone, name))
+            if name:
+                cursor.execute("""
+                    INSERT INTO customers (phone, name, language, last_visit)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (phone) 
+                    DO UPDATE SET 
+                        name = EXCLUDED.name, 
+                        language = EXCLUDED.language,
+                        last_visit = CURRENT_TIMESTAMP
+                """, (phone, name, language))
+            else:
+                # Solo guardar idioma sin nombre
+                cursor.execute("""
+                    INSERT INTO customers (phone, language, last_visit)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (phone) 
+                    DO UPDATE SET 
+                        language = EXCLUDED.language,
+                        last_visit = CURRENT_TIMESTAMP
+                """, (phone, language))
             
             conn.commit()
             cursor.close()
@@ -252,6 +278,48 @@ class AppointmentManager:
         
         except Exception as e:
             print(f"Error guardando cliente: {e}")
+    
+    def get_customer_language(self, phone):
+        """Obtener idioma del cliente"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT language FROM customers WHERE phone = %s
+            """, (phone,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            return result[0] if result else None
+        
+        except Exception as e:
+            print(f"Error obteniendo idioma: {e}")
+            return None
+    
+    def update_customer_language(self, phone, language):
+        """Actualizar solo el idioma del cliente"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO customers (phone, language, last_visit)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (phone) 
+                DO UPDATE SET 
+                    language = EXCLUDED.language,
+                    last_visit = CURRENT_TIMESTAMP
+            """, (phone, language))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        
+        except Exception as e:
+            print(f"Error actualizando idioma: {e}")
     
     def get_customer_name(self, phone):
         """Obtener nombre de cliente si existe"""
