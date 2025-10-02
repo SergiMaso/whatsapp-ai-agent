@@ -14,11 +14,19 @@ def detect_language(text):
         
         # Palabras clave catalanas para mejorar detección
         catalan_keywords = ['vull', 'necessito', 'puc', 'tinc', 'avui', 'demà', 'sisplau', 
-                           'gràcies', 'bon dia', 'bona tarda', 'hola', 'adéu', 'taula',
-                           'persones', 'reserva', 'dinar', 'sopar']
+                           'gràcies', 'bon dia', 'bona tarda', 'bona nit', 'hola', 'adéu', 'taula',
+                           'persones', 'reserva', 'dinar', 'sopar', 'voldria', 'podria',
+                           'estava', 'pensant', 'gust', 'nom', 'estic', 'volia']
         
         text_lower = text.lower()
-        if any(word in text_lower for word in catalan_keywords):
+        catalan_count = sum(1 for word in catalan_keywords if word in text_lower)
+        
+        # Si tiene 2 o más palabras catalanas, es catalán
+        if catalan_count >= 2:
+            return 'ca'
+        
+        # Si tiene 1 palabra catalana y detect() no detectó español, es catalán
+        if catalan_count >= 1 and lang != 'es':
             return 'ca'
         
         return lang
