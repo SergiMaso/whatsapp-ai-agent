@@ -61,15 +61,32 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     
     print(f"[DEBUG] Procesando mensaje de {phone}: {message}")
     
-    # Detectar idioma SOLO si es el primer mensaje o un mensaje largo
+    # Detectar idioma del mensaje
+    detected_lang = detect_language(message)
+    
+    # Obtener idioma de la conversación anterior
+    previous_lang = get_conversation_language(phone)
+    
+    # Lógica de decisión:
+    # - Si el mensaje es largo (>15 chars): usar idioma detectado
+    # - Si el mensaje es corto (<= 15 chars): mantener idioma anterior
+    # - Si no hay idioma anterior: usar el detectado
+    
     if len(message) > 15:
-        language = detect_language(message)
+        # Mensaje largo: confiar en la detección
+        language = detected_lang
         set_conversation_language(phone, language)
     else:
-        # Para mensajes cortos, usar el idioma de la conversación
-        language = get_conversation_language(phone)
+        # Mensaje corto: mantener idioma de la conversación
+        if previous_lang and previous_lang != 'ca':  # Si ya tenía un idioma guardado (no default)
+            language = previous_lang
+        else:
+            # Primera vez o default: detectar
+            language = detected_lang
+            if detected_lang in ['es', 'en', 'fr', 'de', 'it']:  # Idiomas válidos
+                set_conversation_language(phone, language)
     
-    print(f"[DEBUG] Idioma detectado/usado: {language}")
+    print(f"[DEBUG] Idioma: detectado={detected_lang}, anterior={previous_lang}, usado={language}")
     
     # Mapeo de idiomas
     language_names = {
