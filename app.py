@@ -72,9 +72,15 @@ def whatsapp_webhook():
         ai_response = process_message_with_ai(incoming_msg, from_number, appointment_manager, conversation_manager)
         
         print(f"[AI] Respuesta recibida del procesador: {ai_response[:50] if ai_response else 'None'}...")
-        print(f"[SEND] Enviando mensaje a WhatsApp...")
-        resp.message(ai_response)
-        print(f"[OK] Mensaje enviado correctamente")
+        print(f"[SEND] Enviando mensaje a WhatsApp (longitud: {len(ai_response)} chars)...")
+        
+        try:
+            resp.message(ai_response)
+            print(f"[OK] Mensaje agregado a TwiML response")
+        except Exception as msg_error:
+            print(f"[ERROR] Error al agregar mensaje: {msg_error}")
+            import traceback
+            traceback.print_exc()
     
     except Exception as e:
         print(f"[ERROR] Error en webhook: {e}")

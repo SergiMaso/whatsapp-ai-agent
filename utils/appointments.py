@@ -289,6 +289,17 @@ class ConversationManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Tabla de conversaciones
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id SERIAL PRIMARY KEY,
+                    phone VARCHAR(50) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             # Tabla de mesas
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tables (

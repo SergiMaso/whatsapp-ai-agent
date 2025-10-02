@@ -287,13 +287,15 @@ INSTRUCCIONES:
                 if result:
                     table_info = result['table']
                     print(f"[OK] Reserva creada exitosamente - Mesa {table_info['number']}")
-                    confirmations = {
-                        'es': f"Reserva confirmada!\n\nNombre: {function_args['client_name']}\nPersonas: {num_people}\nFecha: {function_args['date']}\nHora: {function_args['time']}\nMesa: {table_info['number']} (capacidad {table_info['capacity']})\n\nTe esperamos! Si necesitas modificar la reserva, avisanos.",
-                        'ca': f"Reserva confirmada!\n\nNom: {function_args['client_name']}\nPersones: {num_people}\nData: {function_args['date']}\nHora: {function_args['time']}\nTaula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem! Si necessites modificar la reserva, avisa'ns.",
-                        'en': f"Reservation confirmed!\n\nName: {function_args['client_name']}\nPeople: {num_people}\nDate: {function_args['date']}\nTime: {function_args['time']}\nTable: {table_info['number']} (capacity {table_info['capacity']})\n\nWe look forward to seeing you!"
-                    }
                     
-                    assistant_reply = confirmations.get(language, confirmations['es'])
+                    # Mensajes de confirmación SIMPLES sin emojis problemáticos
+                    if language == 'ca':
+                        assistant_reply = f"Reserva confirmada!\n\nNom: {function_args['client_name']}\nPersones: {num_people}\nData: {function_args['date']}\nHora: {function_args['time']}\nTaula: {table_info['number']}\n\nT'esperem!"
+                    elif language == 'es':
+                        assistant_reply = f"Reserva confirmada!\n\nNombre: {function_args['client_name']}\nPersonas: {num_people}\nFecha: {function_args['date']}\nHora: {function_args['time']}\nMesa: {table_info['number']}\n\nTe esperamos!"
+                    else:
+                        assistant_reply = f"Reservation confirmed!\n\nName: {function_args['client_name']}\nPeople: {num_people}\nDate: {function_args['date']}\nTime: {function_args['time']}\nTable: {table_info['number']}\n\nSee you!"
+                    
                     conversation_manager.clear_history(phone)
                 else:
                     print(f"[ERROR] No hay mesas disponibles")
