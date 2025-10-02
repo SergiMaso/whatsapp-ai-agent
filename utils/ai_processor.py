@@ -136,6 +136,8 @@ INSTRUCCIONES:
         # Inicializar cliente OpenAI
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
+        print(f"[GPT] Llamando a GPT-4 con {len(messages)} mensajes...")
+        
         # Llamada a GPT-4 con function calling
         response = client.chat.completions.create(
             model="gpt-4-turbo-preview",
@@ -198,8 +200,13 @@ INSTRUCCIONES:
             temperature=0.7
         )
         
+        print(f"[GPT] Respuesta recibida de GPT-4")
+        
         message_response = response.choices[0].message
         assistant_reply = ""
+        
+        print(f"[GPT] Tool calls: {message_response.tool_calls is not None}")
+        print(f"[GPT] Content: {message_response.content[:50] if message_response.content else 'None'}...")
         
         # Si la IA quiere ejecutar una función
         if message_response.tool_calls:
@@ -349,7 +356,7 @@ INSTRUCCIONES:
         
         # Guardar en historial
         print(f"[SAVE] Guardando en historial...")
-        print(f"[SAVE] Respuesta: {assistant_reply[:100]}...")
+        print(f"[SAVE] Respuesta a enviar ({len(assistant_reply)} chars): {assistant_reply[:100]}...")
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
         print(f"[OK] Historial guardado correctamente")
@@ -359,6 +366,7 @@ INSTRUCCIONES:
         if any(word in message.lower() for word in restart_keywords):
             conversation_manager.clear_history(phone)
         
+        print(f"[RETURN] Devolviendo respuesta al webhook...")
         return assistant_reply
     
     except Exception as e:

@@ -68,9 +68,13 @@ def whatsapp_webhook():
             return str(resp)
         
         # Procesar con IA
+        print(f"[AI] Enviando a procesador de IA: {incoming_msg[:50]}...")
         ai_response = process_message_with_ai(incoming_msg, from_number, appointment_manager, conversation_manager)
         
+        print(f"[AI] Respuesta recibida del procesador: {ai_response[:50] if ai_response else 'None'}...")
+        print(f"[SEND] Enviando mensaje a WhatsApp...")
         resp.message(ai_response)
+        print(f"[OK] Mensaje enviado correctamente")
     
     except Exception as e:
         print(f"[ERROR] Error en webhook: {e}")
