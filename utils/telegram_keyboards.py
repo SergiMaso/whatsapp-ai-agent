@@ -29,7 +29,7 @@ def get_time_slots_keyboard(language='es'):
 
 def get_lunch_times_keyboard(language='es'):
     """
-    Horarios de comida: 12:00, 12:30, 13:00, 13:30, 14:00, 14:30
+    Horarios de comida: 12:00, 12:30, 13:00, 13:30, 14:00, 14:30, 15:00
     """
     
     keyboard = [
@@ -43,14 +43,17 @@ def get_lunch_times_keyboard(language='es'):
             InlineKeyboardButton("14:00", callback_data='time_14:00'),
             InlineKeyboardButton("14:30", callback_data='time_14:30')
         ],
-        [InlineKeyboardButton("⬅️ Tornar" if language == 'ca' else "⬅️ Volver", callback_data='back_to_categories')]
+        [
+            InlineKeyboardButton("15:00", callback_data='time_15:00'),
+            InlineKeyboardButton("⬅️ Tornar" if language == 'ca' else "⬅️ Volver", callback_data='back_to_categories')
+        ]
     ]
     
     return InlineKeyboardMarkup(keyboard)
 
 def get_dinner_times_keyboard(language='es'):
     """
-    Horarios de cena: 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00
+    Horarios de cena: 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00, 22:30
     """
     
     keyboard = [
@@ -66,6 +69,7 @@ def get_dinner_times_keyboard(language='es'):
         ],
         [
             InlineKeyboardButton("22:00", callback_data='time_22:00'),
+            InlineKeyboardButton("22:30", callback_data='time_22:30'),
             InlineKeyboardButton("⬅️ Tornar" if language == 'ca' else "⬅️ Volver", callback_data='back_to_categories')
         ]
     ]

@@ -171,11 +171,11 @@ FECHA Y HORA ACTUAL: Hoy es {day_name} {today_str} (2 de octubre de 2025), hora 
 IDIOMA: El usuario está escribiendo en {lang_name}. Responde SIEMPRE en {lang_name}.
 {customer_greeting}
 
-INFORMACIÓN DEL RESTAURANTE:
+INFORMACIÓ DEL RESTAURANTE:
 - Capacidad: 20 mesas de 4 personas y 8 mesas de 2 personas
 - Horarios de servicio:
-  * Comida: 12:00 a 14:30 (última reserva)
-  * Cena: 19:00 a 22:00 (última reserva)
+  * Comida: 12:00 a 15:00 (última reserva)
+  * Cena: 19:00 a 22:30 (última reserva)
 - Solo aceptamos reservas en estos horarios
 
 CAPACIDADES:
@@ -189,9 +189,9 @@ PROCESO DE RESERVA:
 1. Saluda cordialmente
 2. Pregunta para cuántas personas (1-8 personas máximo)
 3. Pregunta qué día (acepta "hoy", "mañana", "el viernes", fechas específicas)
-4. IMPORTANTE - Lógica de horario:
-   {"- SOLO CENA: Ya son más de las 15:00, si pide HOY solo acepta CENA (19:00-22:00)" if only_dinner_today else "- Pregunta si prefiere comida (12:00-14:30) o cena (19:00-22:00)"}
-   - Luego pregunta hora específica
+4. Pregunta horario preferido y hora específica
+   - Si pide HOY después de las 15:00, SOLO ofrece CENA (19:00-22:30)
+   - Si pide otro día, pregunta: ¿comida (12:00-15:00) o cena (19:00-22:30)?
 5. {"NO preguntes el nombre, ya lo tienes guardado: " + customer_name if customer_name else "Pregunta SOLO el nombre (NO apellido)"}
 6. Confirma todos los detalles antes de crear la reserva
 7. IMPORTANTE: Convierte horas en formato natural a formato 24h:
@@ -378,15 +378,15 @@ INSTRUCCIONES:
                     
                     print(f"[TIME] Hora parseada: {hour}:{minute}")
                     
-                    is_lunch = 12 <= hour < 15 or (hour == 14 and minute <= 30)
-                    is_dinner = 19 <= hour < 23 or (hour == 22 and minute == 0)
+                    is_lunch = 12 <= hour < 16 or (hour == 15 and minute == 0)
+                    is_dinner = 19 <= hour < 23 or (hour == 22 and minute <= 30)
                     
                     if not (is_lunch or is_dinner):
                         print(f"[ERROR] Hora fuera de rango - Lunch: {is_lunch}, Dinner: {is_dinner}")
                         error_msgs = {
-                            'es': "Lo siento, solo aceptamos reservas de 12:00-14:30 o 19:00-22:00. ¿Prefieres otro horario?",
-                            'ca': "Ho sento, només acceptem reserves de 12:00-14:30 o 19:00-22:00. Prefereixes un altre horari?",
-                            'en': "Sorry, we only accept reservations from 12:00-14:30 or 19:00-22:00. Would you prefer another time?"
+                            'es': "Lo siento, solo aceptamos reservas de 12:00-15:00 o 19:00-22:30. ¿Prefieres otro horario?",
+                            'ca': "Ho sento, només acceptem reserves de 12:00-15:00 o 19:00-22:30. Prefereixes un altre horari?",
+                            'en': "Sorry, we only accept reservations from 12:00-15:00 or 19:00-22:30. Would you prefer another time?"
                         }
                         assistant_reply = error_msgs.get(language, error_msgs['es'])
                         conversation_manager.save_message(phone, "user", message)
