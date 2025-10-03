@@ -121,7 +121,19 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
             appointment_manager.save_customer_info(normalized_phone, None, detected_lang)
             language = detected_lang
     else:
-        language = saved_language
+        # IMPORTANTE: Si el usuario está hablando en otro idioma diferente al guardado,
+        # actualizar automáticamente (excepto si solo es una hora como "22:30")
+        if len(message.strip()) > 5:  # No actualizar para mensajes muy cortos como horas
+            detected_lang = detect_language(message)
+            # Si el idioma detectado es diferente y tiene alta confianza, actualizar
+            if detected_lang != saved_language and detected_lang in ['en', 'es', 'ca']:
+                print(f"[LANG] Cambio automático de {saved_language} a {detected_lang}")
+                appointment_manager.update_customer_language(normalized_phone, detected_lang)
+                language = detected_lang
+            else:
+                language = saved_language
+        else:
+            language = saved_language
     
     print(f"[DEBUG] Idioma usado: {language}")
     
@@ -192,7 +204,7 @@ PROCESO DE RESERVA:
 4. Pregunta horario preferido y hora específica
    - Si pide HOY después de las 15:00, SOLO ofrece CENA (19:00-22:30)
    - Si pide otro día, pregunta: ¿comida (12:00-15:00) o cena (19:00-22:30)?
-5. {"NO preguntes el nombre, ya lo tienes guardado: " + customer_name if customer_name else "Pregunta SOLO el nombre (NO apellido)"}
+5. Pregunta SIEMPRE el nombre, incluso si ya está guardado (para confirmar)
 6. Confirma todos los detalles antes de crear la reserva
 7. IMPORTANTE: Convierte horas en formato natural a formato 24h:
    - "2 del mediodía" / "2 de la tarde" / "2 del migdia" = 14:00
@@ -203,6 +215,7 @@ PROCESO DE RESERVA:
    - "las 2" (en contexto de comida) = 14:00
    - "las 8" / "les 8" (en contexto de cena) = 20:00
    - "las 9" / "les 9" (en contexto de cena) = 21:00
+8. CRÍTICO: 22:30 ES VÁLIDA - es la Última hora de cena permitida
 
 PROCESO DE MODIFICACIÓN:
 1. Si el usuario quiere MODIFICAR una reserva (cambiar personas, fecha u hora):
