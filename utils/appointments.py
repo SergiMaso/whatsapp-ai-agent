@@ -27,7 +27,6 @@ class AppointmentManager:
                 )
             """)
             
-            # date (DATE), start_time (TIMESTAMP), end_time (TIMESTAMP)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS appointments (
                     id SERIAL PRIMARY KEY,
@@ -94,7 +93,6 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Buscar mesas con solapamiento de tiempo
             if exclude_appointment_id:
                 cursor.execute("""
                     SELECT table_id FROM appointments 
@@ -144,7 +142,6 @@ class AppointmentManager:
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1):
         """date: YYYY-MM-DD, time: HH:MM"""
         try:
-            # Combinar date y time en TIMESTAMP
             start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
@@ -157,12 +154,13 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # FIX: Ahora pasamos el número correcto de parámetros (9 valores para 9 columnas)
             cursor.execute("""
                 INSERT INTO appointments 
                 (phone, client_name, date, start_time, end_time, num_people, table_id, language, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed')
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language))
+            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, 'confirmed'))
             
             appointment_id = cursor.fetchone()[0]
             conn.commit()
@@ -195,7 +193,6 @@ class AppointmentManager:
             
             current_start, current_end, current_num_people = result
             
-            # Calcular nueva fecha/hora
             if new_date or new_time:
                 date_part = new_date if new_date else current_start.strftime("%Y-%m-%d")
                 time_part = new_time if new_time else current_start.strftime("%H:%M")
@@ -203,7 +200,6 @@ class AppointmentManager:
             else:
                 new_start = current_start
             
-            # Mantener misma duración
             duration = (current_end - current_start).total_seconds() / 3600
             new_end = new_start + timedelta(hours=duration)
             new_date_only = new_start.date()
@@ -267,7 +263,7 @@ class AppointmentManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, date, start_time, end_time, num_people
+                SELECT id, date, start_time, num_people
                 FROM appointments
                 WHERE phone = %s AND status = 'confirmed'
                 ORDER BY created_at DESC LIMIT 1
@@ -281,9 +277,8 @@ class AppointmentManager:
                 return {
                     'id': result[0], 
                     'date': result[1], 
-                    'start': result[2], 
-                    'end': result[3], 
-                    'num_people': result[4]
+                    'time': result[2].strftime("%H:%M"),
+                    'num_people': result[3]
                 }
             return None
         

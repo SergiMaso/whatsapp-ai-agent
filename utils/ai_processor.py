@@ -8,31 +8,34 @@ from datetime import datetime
 load_dotenv()
 
 def detect_language(text):
-    """Detectar idioma con PRIORIDAD para catalán y castellano"""
+    """Detectar idioma con PRIORIDAD para español y catalán"""
     try:
         text_lower = text.lower().strip()
         
-        # PASO 1: Palabras catalanas - MÁXIMA PRIORIDAD
-        catalan_keywords = [
-            'vull', 'necessito', 'puc', 'tinc', 'avui', 'demà', 'sisplau', 
-            'gràcies', 'bon dia', 'bona tarda', 'adéu', 'adeu', 'taula',
-            'persones', 'reserva', 'dinar', 'sopar', 'només', 'també', 'però',
-            'si us plau', 'moltes', 'gracies', 'estic', 'està', 'som', 'són'
-        ]
-        
-        if any(word in text_lower for word in catalan_keywords):
-            return 'ca'
-        
-        # PASO 2: Palabras españolas
+        # PASO 1: Palabras españolas - MÁXIMA PRIORIDAD
         spanish_keywords = [
             'quiero', 'necesito', 'puedo', 'tengo', 'hoy', 'mañana',
             'por favor', 'gracias', 'buenos dias', 'buenas tardes',
             'mesa', 'personas', 'reserva', 'comida', 'cena',
-            'estoy', 'está', 'somos', 'son', 'hacer'
+            'estoy', 'está', 'somos', 'son', 'hacer',
+            'noche', 'tarde', 'por', 'para', 'con', 'que', 'como',
+            'cuando', 'donde', 'quien', 'cual', 'cuantos'
         ]
         
         if any(word in text_lower for word in spanish_keywords):
             return 'es'
+        
+        # PASO 2: Palabras catalanas
+        catalan_keywords = [
+            'vull', 'necessito', 'puc', 'tinc', 'avui', 'demà', 'sisplau', 
+            'gràcies', 'bon dia', 'bona tarda', 'adéu', 'adeu', 'taula',
+            'persones', 'reserva', 'dinar', 'sopar', 'només', 'també', 'però',
+            'si us plau', 'moltes', 'estic', 'està', 'som', 'són',
+            'quan', 'on', 'qui', 'qual', 'quants'
+        ]
+        
+        if any(word in text_lower for word in catalan_keywords):
+            return 'ca'
         
         # PASO 3: Palabras inglesas
         english_keywords = [
@@ -45,8 +48,17 @@ def detect_language(text):
         
         # PASO 4: Usar langdetect como último recurso
         detected = detect(text)
-        if detected == 'tr':  # langdetect confunde catalán con turco
-            return 'ca'
+        
+        # CORRECCIÓN: langdetect confunde idiomas
+        if detected in ['tr', 'it', 'pt']:  # Turco, italiano, portugués → probablemente es español o catalán
+            # Si tiene acentos españoles, es español
+            if any(char in text for char in ['ó', 'í', 'á', 'é', 'ú', 'ñ']):
+                return 'es'
+            # Si tiene acentos catalanes, es catalán
+            if any(char in text for char in ['à', 'è', 'ò', 'ç']):
+                return 'ca'
+            # Default español
+            return 'es'
         
         return detected
         
@@ -65,20 +77,20 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     message_count = conversation_manager.get_message_count(phone)
     
     # PASO 3: Decidir idioma según lógica
-    if saved_language and saved_language != 'tr':
+    if saved_language and saved_language not in ['tr', 'it', 'pt']:  # Ignorar falsos positivos
         # Cliente existente: usar idioma guardado
         language = saved_language
         print(f"🌍 Client conegut - Idioma: {language}")
     elif message_count == 0:
-        # PRIMER MENSAJE: siempre detectar (incluso si es "hola")
-        language = detect_language(message)
-        # NO guardar en el primer mensaje genérico
-        if message.lower().strip() not in ['hola', 'hello', 'hi', 'hey']:
-            appointment_manager.save_customer_language(phone, language)
-        print(f"👋 Primer missatge → Detectat: {language}")
+        # PRIMER MENSAJE: siempre español por defecto
+        language = 'es'
+        print(f"👋 Primer missatge → Default: {language}")
     else:
         # SEGUNDO MENSAJE o posteriores: detectar y GUARDAR definitivamente
         language = detect_language(message)
+        # Validar que no sea un falso positivo
+        if language in ['tr', 'it', 'pt']:
+            language = 'es'  # Forzar español si hay confusión
         appointment_manager.save_customer_language(phone, language)
         print(f"🌍 Idioma guardado: {phone} → {language}")
         print(f"📝 Missatge {message_count + 1} → Detectat i guardat: {language}")
@@ -123,9 +135,9 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     else:
         # NO CONOCEMOS AL CLIENTE - No usar nombre por defecto
         no_name_instructions = {
-            'ca': "IMPORTANT: Aquest és un client NOU. NO tens el seu nom encara. NO l'hagis de dir 'Usuario' ni cap nom genèric. Només saluda amb 'Hola!' sense cap nom fins que ell et digui el seu nom.",
-            'en': "IMPORTANT: This is a NEW customer. You DON'T have their name yet. DO NOT call them 'User' or any generic name. Just say 'Hello!' without any name until they tell you their name.",
-            'es': "IMPORTANTE: Este es un cliente NUEVO. NO tienes su nombre todavía. NO lo llames 'Usuario' ni ningún nombre genérico. Solo saluda con '¡Hola!' sin ningún nombre hasta que te diga su nombre."
+            'ca': "IMPORTANT: Aquest és un client NOU. NO tens el seu nom encara. NO l'hagis de dir cap nom genèric. Només saluda amb 'Hola!' sense cap nom fins que ell et digui el seu nom.",
+            'en': "IMPORTANT: This is a NEW customer. You DON'T have their name yet. DO NOT use any generic name. Just say 'Hello!' without any name until they tell you their name.",
+            'es': "IMPORTANTE: Este es un cliente NUEVO. NO tienes su nombre todavía. NO uses ningún nombre genérico. Solo saluda con '¡Hola!' sin ningún nombre hasta que te diga su nombre."
         }
         customer_context = no_name_instructions.get(language, no_name_instructions['es'])
     
@@ -133,9 +145,9 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     appointment_context = ""
     if latest_appointment:
         apt_contexts = {
-            'ca': f"\n\nRECORDA: Aquest usuari té una reserva activa:\n- ID: {latest_appointment['id']}\n- Data: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Persones: {latest_appointment['num_people']}\n\nSi demana canviar/modificar la reserva, usa update_appointment amb aquest ID.",
-            'en': f"\n\nREMEMBER: This user has an active reservation:\n- ID: {latest_appointment['id']}\n- Date: {latest_appointment['date']}\n- Time: {latest_appointment['time']}\n- People: {latest_appointment['num_people']}\n\nIf they ask to change/modify, use update_appointment with this ID.",
-            'es': f"\n\nRECUERDA: Este usuario tiene una reserva activa:\n- ID: {latest_appointment['id']}\n- Fecha: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Personas: {latest_appointment['num_people']}\n\nSi pide cambiar/modificar, usa update_appointment con este ID."
+            'ca': f"\n\nRECORDA: Aquest usuari té una reserva activa:\n- ID: {latest_appointment['id']}\n- Data: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Persones: {latest_appointment['num_people']}",
+            'en': f"\n\nREMEMBER: This user has an active reservation:\n- ID: {latest_appointment['id']}\n- Date: {latest_appointment['date']}\n- Time: {latest_appointment['time']}\n- People: {latest_appointment['num_people']}",
+            'es': f"\n\nRECUERDA: Este usuario tiene una reserva activa:\n- ID: {latest_appointment['id']}\n- Fecha: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Personas: {latest_appointment['num_people']}"
         }
         appointment_context = apt_contexts.get(language, apt_contexts['es'])
     
@@ -154,17 +166,11 @@ INFORMACIÓ DEL RESTAURANT:
   * Dinar: 12:00 a 14:30
   * Sopar: 19:00 a 22:00
 
-CAPACITATS:
-1. Crear reserves (necessites: nom, data, hora, número de persones)
-2. Consultar reserves
-3. Cancel·lar reserves
-4. Modificar reserves
-
 PROCÉS DE RESERVA:
 1. Saluda (si és client nou, NO diguis cap nom fins que ell et digui el seu)
 2. Pregunta per quantes persones (màxim 4)
 3. Pregunta quin dia
-4. Pregunta quin horari (dinar o sopar) i hora específica
+4. Pregunta quin horari i hora específica
 5. Pregunta el nom (només si no el tens)
 6. Confirma tots els detalls abans de crear
 
@@ -183,17 +189,11 @@ INFORMACIÓN DEL RESTAURANTE:
   * Comida: 12:00 a 14:30
   * Cena: 19:00 a 22:00
 
-CAPACIDADES:
-1. Crear reservas (necesitas: nombre, fecha, hora, número de personas)
-2. Consultar reservas
-3. Cancelar reservas
-4. Modificar reservas
-
 PROCESO DE RESERVA:
 1. Saluda (si es cliente nuevo, NO digas ningún nombre hasta que él te diga el suyo)
 2. Pregunta para cuántas personas (máximo 4)
 3. Pregunta qué día
-4. Pregunta qué horario (comida o cena) y hora específica
+4. Pregunta qué horario y hora específica
 5. Pregunta el nombre (solo si no lo tienes)
 6. Confirma todos los detalles antes de crear
 
@@ -212,17 +212,11 @@ RESTAURANT INFO:
   * Lunch: 12:00 to 14:30
   * Dinner: 19:00 to 22:00
 
-CAPABILITIES:
-1. Create reservations (need: name, date, time, number of people)
-2. Check reservations
-3. Cancel reservations
-4. Modify reservations
-
 RESERVATION PROCESS:
 1. Greet (if new customer, DON'T say any name until they tell you theirs)
 2. Ask for how many people (maximum 4)
 3. Ask which day
-4. Ask which time slot (lunch or dinner) and specific time
+4. Ask which time slot and specific time
 5. Ask for name (only if you don't have it)
 6. Confirm all details before creating
 
@@ -360,8 +354,9 @@ BE warm, professional and friendly."""
                     assistant_reply = headers.get(language, headers['es'])
                     
                     for apt in appointments:
-                        apt_id, name, date, time, num_people, table_num, status = apt
-                        assistant_reply += f"ID: {apt_id}\n• {date} - {time}\n  {num_people} persones - Mesa {table_num}\n  {name} - {status}\n\n"
+                        apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
+                        time_str = start_time.strftime("%H:%M")
+                        assistant_reply += f"ID: {apt_id}\n• {date} - {time_str}\n  {num_people} persones - Mesa {table_num}\n  {name} - {status}\n\n"
             
             elif function_name == "cancel_appointment":
                 apt_id = function_args.get('appointment_id')
