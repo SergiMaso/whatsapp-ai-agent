@@ -46,6 +46,24 @@ def should_show_time_buttons(phone, message, ai_response):
     
     return False
 
+def should_show_lunch_directly(message):
+    """
+    Detectar si el usuario mencionó específicamente LUNCH/DINAR/COMIDA
+    Si es así, mostrar directamente las horas de comida sin preguntar
+    """
+    message_lower = message.lower()
+    lunch_keywords = ['lunch', 'dinar', 'migdia', 'comida', 'almuerzo', 'mediodía']
+    return any(keyword in message_lower for keyword in lunch_keywords)
+
+def should_show_dinner_directly(message):
+    """
+    Detectar si el usuario mencionó específicamente DINNER/SOPAR/CENA
+    Si es así, mostrar directamente las horas de cena sin preguntar
+    """
+    message_lower = message.lower()
+    dinner_keywords = ['dinner', 'sopar', 'cena', 'noche', 'nit', 'vespre']
+    return any(keyword in message_lower for keyword in dinner_keywords)
+
 def should_show_only_dinner(message):
     """
     Detectar si solo se deben mostrar horarios de cena

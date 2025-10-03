@@ -10,11 +10,13 @@ load_dotenv()
 def detect_language(text):
     """Detectar el idioma del texto con mejor soporte para catalán"""
     try:
-        # Si el texto es muy corto (sí, no, ok, etc), no detectar
-        if len(text.strip()) <= 3:
-            return 'ca'  # Default catalán para respuestas cortas
+        text_lower = text.lower().strip()
         
-        lang = detect(text)
+        # Palabras clave INGLESAS - detectar primero
+        english_keywords = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening',
+                          'i want', 'i need', 'can i', 'i have', 'today', 'tomorrow', 'please',
+                          'thank you', 'thanks', 'table', 'people', 'reservation', 'book',
+                          'lunch', 'dinner', 'would like', 'could i', 'want to make']
         
         # Palabras clave catalanas para mejorar detección
         catalan_keywords = ['vull', 'necessito', 'puc', 'tinc', 'avui', 'demà', 'sisplau', 
@@ -28,9 +30,25 @@ def detect_language(text):
                           'gracias', 'buenos días', 'buenas tardes', 'adiós', 'mesa',
                           'personas', 'comer', 'cenar', 'quería', 'podría', 'apellido']
         
-        text_lower = text.lower()
+        # Contar palabras clave por idioma
+        english_count = sum(1 for word in english_keywords if word in text_lower)
         catalan_count = sum(1 for word in catalan_keywords if word in text_lower)
         spanish_count = sum(1 for word in spanish_keywords if word in text_lower)
+        
+        # PRIORIDAD: Inglés tiene prioridad si detectamos palabras inglesas
+        if english_count >= 1:
+            return 'en'
+        
+        # Si el texto es muy corto (sí, no, ok, etc) y no es inglés, usar default
+        if len(text.strip()) <= 3:
+            return 'ca'  # Default catalán para respuestas cortas
+        
+        # Detectar con langdetect
+        lang = detect(text)
+        
+        # Si langdetect dice inglés, confiar
+        if lang == 'en':
+            return 'en'
         
         # Si tiene palabras españolas claras, es español
         if spanish_count >= 2:
@@ -90,13 +108,15 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     
     # 3. Si no hay idioma guardado, detectar del mensaje
     if not saved_language:
-        # Si solo dice "Hola" o "Hello" o similar, usar default y esperar
-        if len(message.strip()) <= 10 and message.lower() in ['hola', 'hello', 'hi', 'hey', 'bon dia', 'bona tarda']:
-            language = 'es'  # Default español, esperamos al siguiente mensaje
-            print(f"[LANG] Saludo corto - usando default: es (sin guardar)")
+        # Detectar idioma del mensaje (incluso saludos cortos)
+        detected_lang = detect_language(message)
+        
+        # Solo saludos en catalán/español sin palabra clave inglesa son ambiguos
+        if len(message.strip()) <= 10 and message.lower() in ['hola', 'bon dia', 'bona tarda']:
+            language = 'ca'  # Default catalán para saludos ambiguos cat/es, esperamos
+            print(f"[LANG] Saludo corto - usando default: ca (sin guardar)")
         else:
-            # Mensaje más largo, detectar idioma
-            detected_lang = detect_language(message)
+            # Guardar idioma detectado (incluso si es 'hello' -> 'en')
             print(f"[LANG] Primer mensaje - detectado: {detected_lang}")
             appointment_manager.save_customer_info(normalized_phone, None, detected_lang)
             language = detected_lang

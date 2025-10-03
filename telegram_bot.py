@@ -10,7 +10,14 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from dotenv import load_dotenv
 from utils.appointments import AppointmentManager, ConversationManager
 from utils.ai_processor import process_message_with_ai, detect_language
-from utils.conversation_state import should_show_time_buttons, should_show_only_dinner, set_conversation_state, get_conversation_state
+from utils.conversation_state import (
+    should_show_time_buttons, 
+    should_show_only_dinner,
+    should_show_lunch_directly,
+    should_show_dinner_directly,
+    set_conversation_state, 
+    get_conversation_state
+)
 from utils.telegram_keyboards import (
     get_time_slots_keyboard,
     get_lunch_times_keyboard,
@@ -82,16 +89,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Detectar si debemos mostrar botones de hora
         language = detect_language(user_message)
-        if should_show_time_buttons(user_id, user_message, response):
-            # Verificar si solo puede ser cena
-            if should_show_only_dinner(user_message):
-                logger.info("[BUTTONS] Solo cena disponible - Mostrando horarios de cena directamente")
-                keyboard = get_dinner_times_keyboard(language)
-                await update.message.reply_text(response, reply_markup=keyboard)
-            else:
-                logger.info("[BUTTONS] Mostrando botones de horario (comida y cena)")
-                keyboard = get_time_slots_keyboard(language)
-                await update.message.reply_text(response, reply_markup=keyboard)
+        
+        # PRIORIDAD 1: Si el usuario mencionó específicamente LUNCH/DINAR
+        if should_show_time_buttons(user_id, user_message, response) and should_show_lunch_directly(user_message):
+            logger.info("[BUTTONS] Usuario mencionó LUNCH - Mostrando horarios de comida directamente")
+            keyboard = get_lunch_times_keyboard(language)
+            await update.message.reply_text(response, reply_markup=keyboard)
+        # PRIORIDAD 2: Si el usuario mencionó específicamente DINNER/SOPAR
+        elif should_show_time_buttons(user_id, user_message, response) and should_show_dinner_directly(user_message):
+            logger.info("[BUTTONS] Usuario mencionó DINNER - Mostrando horarios de cena directamente")
+            keyboard = get_dinner_times_keyboard(language)
+            await update.message.reply_text(response, reply_markup=keyboard)
+        # PRIORIDAD 3: Si es tarde y pide para HOY, solo cena
+        elif should_show_time_buttons(user_id, user_message, response) and should_show_only_dinner(user_message):
+            logger.info("[BUTTONS] Solo cena disponible - Mostrando horarios de cena directamente")
+            keyboard = get_dinner_times_keyboard(language)
+            await update.message.reply_text(response, reply_markup=keyboard)
+        # PRIORIDAD 4: Mostrar menú general (comida/cena)
+        elif should_show_time_buttons(user_id, user_message, response):
+            logger.info("[BUTTONS] Mostrando botones de horario (comida y cena)")
+            keyboard = get_time_slots_keyboard(language)
+            await update.message.reply_text(response, reply_markup=keyboard)
         else:
             await update.message.reply_text(response)
         
@@ -214,14 +232,23 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Detectar si debemos mostrar botones
         language = detect_language(transcribed_text)
-        if should_show_time_buttons(user_id, transcribed_text, response):
-            # Verificar si solo puede ser cena
-            if should_show_only_dinner(transcribed_text):
-                keyboard = get_dinner_times_keyboard(language)
-                await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
-            else:
-                keyboard = get_time_slots_keyboard(language)
-                await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+        
+        # PRIORIDAD 1: Si el usuario mencionó LUNCH/DINAR
+        if should_show_time_buttons(user_id, transcribed_text, response) and should_show_lunch_directly(transcribed_text):
+            keyboard = get_lunch_times_keyboard(language)
+            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+        # PRIORIDAD 2: Si el usuario mencionó DINNER/SOPAR
+        elif should_show_time_buttons(user_id, transcribed_text, response) and should_show_dinner_directly(transcribed_text):
+            keyboard = get_dinner_times_keyboard(language)
+            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+        # PRIORIDAD 3: Si es tarde y pide para HOY
+        elif should_show_time_buttons(user_id, transcribed_text, response) and should_show_only_dinner(transcribed_text):
+            keyboard = get_dinner_times_keyboard(language)
+            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+        # PRIORIDAD 4: Menú general
+        elif should_show_time_buttons(user_id, transcribed_text, response):
+            keyboard = get_time_slots_keyboard(language)
+            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
         else:
             await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}")
         
