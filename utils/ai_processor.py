@@ -256,7 +256,7 @@ INSTRUCCIONES:
         
         # Llamada a GPT-4 con function calling
         response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             messages=messages,
             tools=[
                 {
