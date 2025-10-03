@@ -71,7 +71,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     language_change_keywords = {
         'en': ['english', 'in english', 'speak english', 'english please'],
         'es': ['español', 'castellano', 'en español', 'en castellano', 'habla español', 'spanish', 'castellan'],
-        'ca': ['català', 'en català', 'parla català', 'catalan'],
+        'ca': ['català', 'catala', 'en català', 'en catala', 'parla català', 'parla en catala', 'parla en català', 'catalan'],
         'fr': ['français', 'en français', 'parle français', 'french'],
         'de': ['deutsch', 'auf deutsch', 'german'],
         'it': ['italiano', 'in italiano', 'italian']
@@ -446,12 +446,27 @@ INSTRUCCIONES:
                 )
                 
                 if success:
-                    update_msgs = {
-                        'es': "Reserva modificada correctamente!",
-                        'ca': "Reserva modificada correctament!",
-                        'en': "Reservation updated successfully!"
-                    }
-                    assistant_reply = update_msgs.get(language, update_msgs['es'])
+                    # Obtener los detalles actualizados de la reserva
+                    appointments = appointment_manager.get_appointments(normalized_phone)
+                    updated_apt = next((apt for apt in appointments if apt[0] == apt_id), None)
+                    
+                    if updated_apt:
+                        apt_id_db, name, apt_date, apt_time, people, table_num, table_cap, status = updated_apt
+                        
+                        if language == 'ca':
+                            assistant_reply = f"Reserva modificada correctament!\n\nNom: {name}\nPersones: {people}\nData: {apt_date}\nHora: {apt_time}\nTaula: {table_num}\n\nT'esperem!"
+                        elif language == 'es':
+                            assistant_reply = f"Reserva modificada correctamente!\n\nNombre: {name}\nPersonas: {people}\nFecha: {apt_date}\nHora: {apt_time}\nMesa: {table_num}\n\nTe esperamos!"
+                        else:
+                            assistant_reply = f"Reservation updated successfully!\n\nName: {name}\nPeople: {people}\nDate: {apt_date}\nTime: {apt_time}\nTable: {table_num}\n\nSee you!"
+                    else:
+                        # Fallback si no se encuentra la reserva actualizada
+                        update_msgs = {
+                            'es': "Reserva modificada correctamente!",
+                            'ca': "Reserva modificada correctament!",
+                            'en': "Reservation updated successfully!"
+                        }
+                        assistant_reply = update_msgs.get(language, update_msgs['es'])
                 else:
                     error_msgs = {
                         'es': "No se pudo modificar la reserva. Puede que no haya disponibilidad para los nuevos datos.",
