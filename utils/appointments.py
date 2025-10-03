@@ -27,11 +27,13 @@ class AppointmentManager:
                 )
             """)
             
+            # date (DATE), start_time (TIMESTAMP), end_time (TIMESTAMP)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS appointments (
                     id SERIAL PRIMARY KEY,
                     phone VARCHAR(50) NOT NULL,
                     client_name VARCHAR(100),
+                    date DATE NOT NULL,
                     start_time TIMESTAMP NOT NULL,
                     end_time TIMESTAMP NOT NULL,
                     num_people INTEGER NOT NULL,
@@ -86,23 +88,25 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error creando tablas: {e}")
     
-    def find_available_table(self, start, end, num_people, exclude_appointment_id=None):
+    def find_available_table(self, start_time, end_time, num_people, exclude_appointment_id=None):
+        """start_time y end_time son TIMESTAMP"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Buscar mesas con solapamiento de tiempo
             if exclude_appointment_id:
                 cursor.execute("""
                     SELECT table_id FROM appointments 
                     WHERE status = 'confirmed' AND id != %s
                       AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
-                """, (exclude_appointment_id, end, start, start, end))
+                """, (exclude_appointment_id, end_time, start_time, start_time, end_time))
             else:
                 cursor.execute("""
                     SELECT table_id FROM appointments 
                     WHERE status = 'confirmed'
                       AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
-                """, (end, start, start, end))
+                """, (end_time, start_time, start_time, end_time))
             
             reserved_ids = [row[0] for row in cursor.fetchall()]
             
@@ -137,13 +141,16 @@ class AppointmentManager:
             print(f"❌ Error buscando mesa: {e}")
             return None
     
-    def create_appointment(self, phone, client_name, date_str, time_str, num_people, duration_hours=2):
+    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1):
+        """date: YYYY-MM-DD, time: HH:MM"""
         try:
-            start = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-            end = start + timedelta(hours=duration_hours)
+            # Combinar date y time en TIMESTAMP
+            start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+            end_time = start_time + timedelta(hours=duration_hours)
+            date_only = start_time.date()
             
             customer_language = self.get_customer_language(phone) or 'es'
-            table = self.find_available_table(start, end, num_people)
+            table = self.find_available_table(start_time, end_time, num_people)
             if not table:
                 return None
             
@@ -152,17 +159,17 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO appointments 
-                (phone, client_name, start_time, end_time, num_people, table_id, language, status)
+                (phone, client_name, date, start_time, end_time, num_people, table_id, language, status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed')
                 RETURNING id
-            """, (phone, client_name, start, end, num_people, table['id'], customer_language))
+            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language))
             
             appointment_id = cursor.fetchone()[0]
             conn.commit()
             cursor.close()
             conn.close()
             
-            return {'id': appointment_id, 'table': table, 'start': start, 'end': end}
+            return {'id': appointment_id, 'table': table, 'start': start_time, 'end': end_time}
         
         except Exception as e:
             print(f"❌ Error creando reserva: {e}")
@@ -170,7 +177,7 @@ class AppointmentManager:
             traceback.print_exc()
             return None
     
-    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_duration=None):
+    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None):
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -188,6 +195,7 @@ class AppointmentManager:
             
             current_start, current_end, current_num_people = result
             
+            # Calcular nueva fecha/hora
             if new_date or new_time:
                 date_part = new_date if new_date else current_start.strftime("%Y-%m-%d")
                 time_part = new_time if new_time else current_start.strftime("%H:%M")
@@ -195,11 +203,10 @@ class AppointmentManager:
             else:
                 new_start = current_start
             
-            if new_duration:
-                new_end = new_start + timedelta(hours=new_duration)
-            else:
-                current_duration = (current_end - current_start).total_seconds() / 3600
-                new_end = new_start + timedelta(hours=current_duration)
+            # Mantener misma duración
+            duration = (current_end - current_start).total_seconds() / 3600
+            new_end = new_start + timedelta(hours=duration)
+            new_date_only = new_start.date()
             
             final_num_people = new_num_people if new_num_people else current_num_people
             
@@ -211,9 +218,9 @@ class AppointmentManager:
             
             cursor.execute("""
                 UPDATE appointments
-                SET start_time = %s, end_time = %s, num_people = %s, table_id = %s
+                SET date = %s, start_time = %s, end_time = %s, num_people = %s, table_id = %s
                 WHERE id = %s AND phone = %s
-            """, (new_start, new_end, final_num_people, table['id'], appointment_id, phone))
+            """, (new_date_only, new_start, new_end, final_num_people, table['id'], appointment_id, phone))
             
             conn.commit()
             cursor.close()
@@ -233,14 +240,14 @@ class AppointmentManager:
             cursor = conn.cursor()
             
             if from_date is None:
-                from_date = datetime.now()
+                from_date = datetime.now().date()
             
             cursor.execute("""
-                SELECT a.id, a.client_name, a.start_time, a.end_time, a.num_people, 
+                SELECT a.id, a.client_name, a.date, a.start_time, a.end_time, a.num_people, 
                        t.table_number, t.capacity, a.status
                 FROM appointments a
                 JOIN tables t ON a.table_id = t.id
-                WHERE a.phone = %s AND a.start_time >= %s
+                WHERE a.phone = %s AND a.date >= %s
                 ORDER BY a.start_time
             """, (phone, from_date))
             
@@ -260,7 +267,7 @@ class AppointmentManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, start_time, end_time, num_people
+                SELECT id, date, start_time, end_time, num_people
                 FROM appointments
                 WHERE phone = %s AND status = 'confirmed'
                 ORDER BY created_at DESC LIMIT 1
@@ -271,7 +278,13 @@ class AppointmentManager:
             conn.close()
             
             if result:
-                return {'id': result[0], 'start': result[1], 'end': result[2], 'num_people': result[3]}
+                return {
+                    'id': result[0], 
+                    'date': result[1], 
+                    'start': result[2], 
+                    'end': result[3], 
+                    'num_people': result[4]
+                }
             return None
         
         except Exception as e:
