@@ -95,23 +95,34 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error creando tablas: {e}")
     
-    def find_available_table(self, date, time, num_people):
+    def find_available_table(self, date, time, num_people, exclude_appointment_id=None):
         """
         Buscar mesa disponible que se ajuste al número de personas
         Prioriza mesas del tamaño exacto, luego más grandes
+        exclude_appointment_id: ID de reserva a excluir (para updates)
         """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Buscar mesas ya reservadas en esa fecha/hora
-            cursor.execute("""
-                SELECT table_id 
-                FROM appointments 
-                WHERE date = %s 
-                  AND time = %s 
-                  AND status = 'confirmed'
-            """, (date, time))
+            # Buscar mesas ya reservadas en esa fecha/hora (excluir la actual si es update)
+            if exclude_appointment_id:
+                cursor.execute("""
+                    SELECT table_id 
+                    FROM appointments 
+                    WHERE date = %s 
+                      AND time = %s 
+                      AND status = 'confirmed'
+                      AND id != %s
+                """, (date, time, exclude_appointment_id))
+            else:
+                cursor.execute("""
+                    SELECT table_id 
+                    FROM appointments 
+                    WHERE date = %s 
+                      AND time = %s 
+                      AND status = 'confirmed'
+                """, (date, time))
             
             reserved_table_ids = [row[0] for row in cursor.fetchall()]
             
@@ -196,6 +207,62 @@ class AppointmentManager:
             traceback.print_exc()
             return None
     
+    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None):
+        """
+        Actualizar una reserva existente
+        Solo actualiza los campos que no son None
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Obtener reserva actual
+            cursor.execute("""
+                SELECT date, time, num_people, table_id
+                FROM appointments
+                WHERE id = %s AND phone = %s AND status = 'confirmed'
+            """, (appointment_id, phone))
+            
+            result = cursor.fetchone()
+            if not result:
+                cursor.close()
+                conn.close()
+                return None
+            
+            current_date, current_time, current_num_people, current_table_id = result
+            
+            # Usar valores actuales si no se proporcionan nuevos
+            final_date = new_date if new_date else current_date
+            final_time = new_time if new_time else current_time
+            final_num_people = new_num_people if new_num_people else current_num_people
+            
+            # Buscar nueva mesa disponible (excluyendo esta reserva)
+            table = self.find_available_table(final_date, final_time, final_num_people, exclude_appointment_id=appointment_id)
+            
+            if not table:
+                cursor.close()
+                conn.close()
+                return None
+            
+            # Actualizar la reserva
+            cursor.execute("""
+                UPDATE appointments
+                SET date = %s, time = %s, num_people = %s, table_id = %s
+                WHERE id = %s AND phone = %s
+            """, (final_date, final_time, final_num_people, table['id'], appointment_id, phone))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {'id': appointment_id, 'table': table}
+        
+        except Exception as e:
+            print(f"❌ Error actualizando reserva: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def get_appointments(self, phone, from_date=None):
         """Obtener reservas de un usuario"""
         try:
@@ -223,6 +290,37 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error obteniendo reservas: {e}")
             return []
+    
+    def get_latest_appointment(self, phone):
+        """Obtener la última reserva activa del usuario"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, date, time, num_people
+                FROM appointments
+                WHERE phone = %s AND status = 'confirmed'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (phone,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if result:
+                return {
+                    'id': result[0],
+                    'date': result[1],
+                    'time': result[2],
+                    'num_people': result[3]
+                }
+            return None
+        
+        except Exception as e:
+            print(f"❌ Error obteniendo última reserva: {e}")
+            return None
     
     def cancel_appointment(self, phone, appointment_id):
         """Cancelar una reserva"""

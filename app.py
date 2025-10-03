@@ -29,14 +29,26 @@ conversation_manager = ConversationManager()
 def home():
     return """
     <h1>WhatsApp AI Agent - Restaurante</h1>
-    <p>Bot de reservas funcionando correctamente</p>
+    <p>⚠️ Bot de WhatsApp TEMPORALMENT DESCONNECTAT per proves</p>
+    <p>✅ Bot de Telegram ACTIU</p>
     <p>Webhook: <code>https://tu-dominio.railway.app/whatsapp</code></p>
     """
 
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_webhook():
-    """Endpoint principal que recibe mensajes de WhatsApp"""
+    """Endpoint principal - TEMPORALMENT DESCONNECTAT"""
     
+    from_number = request.values.get('From', '')
+    
+    resp = MessagingResponse()
+    resp.message("⚠️ WhatsApp bot temporalment desconnectat per manteniment. Utilitza el bot de Telegram mentrestant. Gràcies!")
+    
+    return str(resp)
+
+# COMENTAT TEMPORALMENT EL CODI DE WHATSAPP
+"""
+@app.route('/whatsapp', methods=['POST'])
+def whatsapp_webhook():
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
@@ -71,11 +83,12 @@ def whatsapp_webhook():
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
     
     return str(resp)
+"""
 
 @app.route('/health')
 def health():
     """Endpoint de salud"""
-    return {"status": "ok", "message": "Server is running"}
+    return {"status": "ok", "message": "Server is running - WhatsApp DISABLED"}
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

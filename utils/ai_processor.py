@@ -15,7 +15,7 @@ def detect_language(text):
         # Palabras clave catalanas para mejorar detección
         catalan_keywords = ['vull', 'necessito', 'puc', 'tinc', 'avui', 'demà', 'sisplau', 
                            'gràcies', 'bon dia', 'bona tarda', 'hola', 'adéu', 'taula',
-                           'persones', 'reserva', 'dinar', 'sopar']
+                           'persones', 'reserva', 'dinar', 'sopar', 'canvi', 'modificar']
         
         text_lower = text.lower()
         if any(word in text_lower for word in catalan_keywords):
@@ -49,6 +49,9 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     # Verificar si el cliente ya existe - IMPORTANTE!
     customer_name = appointment_manager.get_customer_name(phone)
     
+    # Obtener última reserva activa
+    latest_appointment = appointment_manager.get_latest_appointment(phone)
+    
     # Fecha actual para contexto
     today = datetime.now()
     today_str = today.strftime("%Y-%m-%d")
@@ -67,6 +70,11 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         else:
             customer_context = f"IMPORTANT: This customer is already known. Their name is {customer_name}. Always greet them by name!"
     
+    # Contexto de reserva activa
+    appointment_context = ""
+    if latest_appointment:
+        appointment_context = f"\n\nRECUERDA: Este usuario tiene una reserva activa:\n- ID: {latest_appointment['id']}\n- Fecha: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Personas: {latest_appointment['num_people']}\n\nSi pide cambiar/modificar la reserva, usa update_appointment con este ID."
+    
     # System prompt para restaurante
     system_prompt = f"""Eres un asistente virtual para reservas de un restaurante.
 
@@ -74,7 +82,7 @@ FECHA ACTUAL: Hoy es {day_name} {today_str} (3 de octubre de 2025).
 
 IDIOMA: El usuario está escribiendo en {lang_name}. Responde SIEMPRE en {lang_name}.
 
-{customer_context}
+{customer_context}{appointment_context}
 
 INFORMACIÓN DEL RESTAURANTE:
 - Capacidad: 20 mesas de 4 personas y 8 mesas de 2 personas
@@ -86,9 +94,10 @@ INFORMACIÓN DEL RESTAURANTE:
 
 CAPACIDADES:
 1. Agendar nuevas reservas (necesitas: nombre, fecha, hora, número de personas 1-4)
-2. Consultar reservas existentes
-3. Cancelar reservas (necesitas el ID de la reserva)
-4. Responder preguntas generales
+2. Modificar/Actualizar reservas existentes (usa update_appointment)
+3. Consultar reservas existentes
+4. Cancelar reservas (necesitas el ID de la reserva)
+5. Responder preguntas generales
 
 PROCESO DE RESERVA:
 1. Saluda cordialmente (si conoces al cliente, salúdalo por su nombre)
@@ -97,6 +106,13 @@ PROCESO DE RESERVA:
 4. Pregunta horario preferido (comida o cena) y hora específica
 5. Pregunta el nombre SOLO si no lo tienes guardado
 6. Confirma todos los detalles antes de crear la reserva
+
+PROCESO DE MODIFICACIÓN:
+1. Si el usuario dice "cambiar", "modificar", "canviar", detecta qué quiere cambiar
+2. Usa update_appointment con el ID de la reserva activa
+3. Solo actualiza los campos que el usuario mencionó (fecha, hora, o personas)
+4. NO canceles la reserva, solo actualízala
+5. Confirma los cambios después de hacerlos
 
 IMPORTANTE SOBRE NÚMERO DE PERSONAS:
 - Pregunta UNA SOLA VEZ cuántas personas son
@@ -116,7 +132,8 @@ INSTRUCCIONES:
 - Usa lenguaje natural del idioma del usuario
 - Si dice "empezar de nuevo", olvida la conversación
 - NO repitas preguntas ya respondidas
-- Cuando tengas TODOS los datos, usa las funciones apropiadas"""
+- Cuando tengas TODOS los datos, usa las funciones apropiadas
+- Para cambios, usa UPDATE en lugar de cancelar y crear nueva"""
 
     try:
         # Obtener historial de conversación
@@ -139,7 +156,7 @@ INSTRUCCIONES:
                     "type": "function",
                     "function": {
                         "name": "create_appointment",
-                        "description": "Crear una reserva cuando tengas TODOS los datos necesarios",
+                        "description": "Crear una reserva NUEVA cuando tengas TODOS los datos necesarios",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -167,6 +184,35 @@ INSTRUCCIONES:
                 {
                     "type": "function",
                     "function": {
+                        "name": "update_appointment",
+                        "description": "MODIFICAR/ACTUALIZAR una reserva existente. Usa esto cuando el usuario quiere cambiar hora, fecha o personas",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "appointment_id": {
+                                    "type": "integer",
+                                    "description": "ID de la reserva a modificar"
+                                },
+                                "new_date": {
+                                    "type": "string",
+                                    "description": "Nueva fecha en formato YYYY-MM-DD (opcional)"
+                                },
+                                "new_time": {
+                                    "type": "string",
+                                    "description": "Nueva hora en formato HH:MM (opcional)"
+                                },
+                                "new_num_people": {
+                                    "type": "integer",
+                                    "description": "Nuevo número de personas (opcional)"
+                                }
+                            },
+                            "required": ["appointment_id"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
                         "name": "list_appointments",
                         "description": "Listar las reservas del usuario"
                     }
@@ -175,7 +221,7 @@ INSTRUCCIONES:
                     "type": "function",
                     "function": {
                         "name": "cancel_appointment",
-                        "description": "Cancelar una reserva existente del usuario",
+                        "description": "CANCELAR completamente una reserva existente. NO uses esto para cambios, usa update_appointment",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -261,6 +307,58 @@ INSTRUCCIONES:
                         'en': f"Sorry, we don't have tables available for {num_people} people on {function_args['date']} at {function_args['time']}. Would you like to try another time?"
                     }
                     assistant_reply = no_tables_msgs.get(language, no_tables_msgs['es'])
+            
+            elif function_name == "update_appointment":
+                apt_id = function_args.get('appointment_id')
+                new_date = function_args.get('new_date')
+                new_time = function_args.get('new_time')
+                new_num_people = function_args.get('new_num_people')
+                
+                # Validar número de personas si se proporciona
+                if new_num_people and (new_num_people < 1 or new_num_people > 4):
+                    error_msgs = {
+                        'es': "Lo siento, solo aceptamos reservas de 1 a 4 personas.",
+                        'ca': "Ho sento, només acceptem reserves d'1 a 4 persones.",
+                        'en': "Sorry, we only accept reservations for 1 to 4 people."
+                    }
+                    return error_msgs.get(language, error_msgs['es'])
+                
+                # Actualizar la reserva
+                result = appointment_manager.update_appointment(
+                    phone=phone,
+                    appointment_id=apt_id,
+                    new_date=new_date,
+                    new_time=new_time,
+                    new_num_people=new_num_people
+                )
+                
+                if result:
+                    table_info = result['table']
+                    
+                    # Construir mensaje con los cambios realizados
+                    changes = []
+                    if new_date:
+                        changes.append(f"📅 Nova data: {new_date}" if language == 'ca' else f"📅 Nueva fecha: {new_date}")
+                    if new_time:
+                        changes.append(f"🕐 Nova hora: {new_time}" if language == 'ca' else f"🕐 Nueva hora: {new_time}")
+                    if new_num_people:
+                        changes.append(f"👥 Persones: {new_num_people}" if language == 'ca' else f"👥 Personas: {new_num_people}")
+                    
+                    changes_text = "\n".join(changes)
+                    
+                    update_msgs = {
+                        'es': f"✅ ¡Reserva actualizada correctamente!\n\n{changes_text}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Nos vemos!",
+                        'ca': f"✅ Reserva actualitzada correctament!\n\n{changes_text}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nEns veiem!",
+                        'en': f"✅ Reservation updated successfully!\n\n{changes_text}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!"
+                    }
+                    assistant_reply = update_msgs.get(language, update_msgs['es'])
+                else:
+                    error_msgs = {
+                        'es': "Lo siento, no pude actualizar la reserva. Puede que no haya mesas disponibles para el nuevo horario.",
+                        'ca': "Ho sento, no he pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles per al nou horari.",
+                        'en': "Sorry, I couldn't update the reservation. There might not be tables available for the new time."
+                    }
+                    assistant_reply = error_msgs.get(language, error_msgs['es'])
             
             elif function_name == "list_appointments":
                 appointments = appointment_manager.get_appointments(phone)

@@ -29,12 +29,17 @@ load_dotenv()
 # Configuración - Railway usa variables de entorno directamente
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN')
 
-# Logging
+# LOGS REDUÏTS - Només errors
 logging.basicConfig(
-    format='[%(levelname)s] %(message)s',
-    level=logging.INFO
+    format='%(message)s',
+    level=logging.WARNING  # Només WARNING i ERROR
 )
 logger = logging.getLogger(__name__)
+
+# Desactivar logs d'altres llibreries
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('telegram').setLevel(logging.WARNING)
+logging.getLogger('apscheduler').setLevel(logging.WARNING)
 
 # Inicializar gestores
 appointment_manager = AppointmentManager()
@@ -71,8 +76,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = f"telegram:{update.effective_user.id}"
     
-    logger.info(f"[MSG] Mensaje de {user_id}: {user_message}")
-    
     # Mostrar "escribiendo..."
     await update.message.chat.send_action(action="typing")
     
@@ -85,36 +88,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conversation_manager
         )
         
-        logger.info(f"[SEND] Enviando respuesta: {response[:50]}...")
-        
         # Detectar si debemos mostrar botones de hora
         language = detect_language(user_message)
         
         # PRIORIDAD 1: Si el usuario mencionó específicamente LUNCH/DINAR
         if should_show_time_buttons(user_id, user_message, response) and should_show_lunch_directly(user_message):
-            logger.info("[BUTTONS] Usuario mencionó LUNCH - Mostrando horarios de comida directamente")
             keyboard = get_lunch_times_keyboard(language)
             await update.message.reply_text(response, reply_markup=keyboard)
         # PRIORIDAD 2: Si el usuario mencionó específicamente DINNER/SOPAR
         elif should_show_time_buttons(user_id, user_message, response) and should_show_dinner_directly(user_message):
-            logger.info("[BUTTONS] Usuario mencionó DINNER - Mostrando horarios de cena directamente")
             keyboard = get_dinner_times_keyboard(language)
             await update.message.reply_text(response, reply_markup=keyboard)
         # PRIORIDAD 3: Si es tarde y pide para HOY, solo cena
         elif should_show_time_buttons(user_id, user_message, response) and should_show_only_dinner(user_message):
-            logger.info("[BUTTONS] Solo cena disponible - Mostrando horarios de cena directamente")
             keyboard = get_dinner_times_keyboard(language)
             await update.message.reply_text(response, reply_markup=keyboard)
         # PRIORIDAD 4: Mostrar menú general (comida/cena)
         elif should_show_time_buttons(user_id, user_message, response):
-            logger.info("[BUTTONS] Mostrando botones de horario (comida y cena)")
             keyboard = get_time_slots_keyboard(language)
             await update.message.reply_text(response, reply_markup=keyboard)
         else:
             await update.message.reply_text(response)
         
     except Exception as e:
-        logger.error(f"[ERROR] Error procesando mensaje: {e}")
+        logger.error(f"❌ Error procesando mensaje: {e}")
         import traceback
         traceback.print_exc()
         await update.message.reply_text(
@@ -129,7 +126,6 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()  # Acknowledge the callback
     
     callback_data = query.data
-    logger.info(f"[BUTTON] Usuario {user_id} presionó: {callback_data}")
     
     language = detect_language(get_conversation_state(user_id).get('last_message', 'hola'))
     
@@ -155,7 +151,6 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif callback_data.startswith('time_'):
         # Usuario seleccionó una hora específica
         time_selected = callback_data.replace('time_', '')
-        logger.info(f"[TIME] Usuario seleccionó hora: {time_selected}")
         
         # Remover el teclado
         await query.edit_message_text(text=f"✅ Hora seleccionada: {time_selected}")
@@ -176,16 +171,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manejar mensajes de voz"""
     user_id = f"telegram:{update.effective_user.id}"
     
-    logger.info(f"[AUDIO] Audio recibido de {user_id}")
-    
     await update.message.reply_text("🎤 Escuchando tu mensaje...")
     
     try:
         # Descargar el archivo de audio
         voice_file = await update.message.voice.get_file()
         voice_url = voice_file.file_path
-        
-        logger.info(f"[AUDIO] Descargando desde: {voice_url}")
         
         # Descargar el audio
         import requests
@@ -200,8 +191,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(audio_path, 'wb') as f:
             f.write(audio_response.content)
         
-        logger.info("[WHISPER] Transcribiendo...")
-        
         # Transcribir con Whisper
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -214,7 +203,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         transcribed_text = transcript.text
-        logger.info(f"[OK] Transcripción: {transcribed_text}")
         
         # Limpiar archivo temporal
         if os.path.exists(audio_path):
@@ -253,7 +241,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}")
         
     except Exception as e:
-        logger.error(f"[ERROR] Error procesando audio: {e}")
+        logger.error(f"❌ Error procesando audio: {e}")
         import traceback
         traceback.print_exc()
         await update.message.reply_text(
@@ -268,10 +256,10 @@ def main():
     """Iniciar el bot de Telegram"""
     
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("ERROR: TELEGRAM_BOT_TOKEN no configurado en .env")
+        print("❌ ERROR: TELEGRAM_BOT_TOKEN no configurado")
         return
     
-    logger.info("🤖 Iniciando bot de Telegram...")
+    print("✅ Bot de Telegram inicializado")
     
     # Crear aplicación
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -284,10 +272,6 @@ def main():
     application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
     
     # Iniciar bot
-    logger.info("✅ Bot de Telegram iniciado correctamente")
-    logger.info("📱 Busca tu bot en Telegram y envía /start")
-    
-    # Polling (se queda escuchando)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
