@@ -29,7 +29,7 @@ load_dotenv()
 # Configuración - Railway usa variables de entorno directamente
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN')
 
-# LOGS REDUÏTS - Només errors
+# LOGS REDUÏTS - Només errors i converses
 logging.basicConfig(
     format='%(message)s',
     level=logging.WARNING  # Només WARNING i ERROR
@@ -48,26 +48,18 @@ conversation_manager = ConversationManager()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /start"""
     user_id = update.effective_user.id
-    lang = detect_language("hola")  # Default
     
-    if lang == 'ca':
-        text = (
-            "Hola! Sóc el bot de reserves del restaurant.\n\n"
-            "Pots escriure o enviar missatges de veu per a:\n"
-            "• Fer una reserva\n"
-            "• Veure les teves reserves\n"
-            "• Cancel·lar una reserva\n\n"
-            "En què puc ajudar-te?"
-        )
-    else:
-        text = (
-            "¡Hola! Soy el bot de reservas del restaurante.\n\n"
-            "Puedes escribir o enviar mensajes de voz para:\n"
-            "• Hacer una reserva\n"
-            "• Ver tus reservas\n"
-            "• Cancelar una reserva\n\n"
-            "¿En qué puedo ayudarte?"
-        )
+    text = (
+        "Hola! Sóc el bot de reserves del restaurant.\n\n"
+        "Pots escriure o enviar missatges de veu per a:\n"
+        "• Fer una reserva\n"
+        "• Veure les teves reserves\n"
+        "• Cancel·lar una reserva\n\n"
+        "En què puc ajudar-te?"
+    )
+    
+    print(f"\n💬 [USUARI {user_id}] /start")
+    print(f"🤖 [BOT] {text[:50]}...")
     
     await update.message.reply_text(text)
 
@@ -75,6 +67,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manejar mensajes de texto"""
     user_message = update.message.text
     user_id = f"telegram:{update.effective_user.id}"
+    
+    print(f"\n💬 [USUARI] {user_message}")
     
     # Mostrar "escribiendo..."
     await update.message.chat.send_action(action="typing")
@@ -88,24 +82,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conversation_manager
         )
         
+        print(f"🤖 [BOT] {response}")
+        
         # Detectar si debemos mostrar botones de hora
         language = detect_language(user_message)
         
         # PRIORIDAD 1: Si el usuario mencionó específicamente LUNCH/DINAR
         if should_show_time_buttons(user_id, user_message, response) and should_show_lunch_directly(user_message):
             keyboard = get_lunch_times_keyboard(language)
+            print(f"⌨️  [BOTONS] Mostrant horaris de dinar")
             await update.message.reply_text(response, reply_markup=keyboard)
         # PRIORIDAD 2: Si el usuario mencionó específicamente DINNER/SOPAR
         elif should_show_time_buttons(user_id, user_message, response) and should_show_dinner_directly(user_message):
             keyboard = get_dinner_times_keyboard(language)
+            print(f"⌨️  [BOTONS] Mostrant horaris de sopar")
             await update.message.reply_text(response, reply_markup=keyboard)
         # PRIORIDAD 3: Si es tarde y pide para HOY, solo cena
         elif should_show_time_buttons(user_id, user_message, response) and should_show_only_dinner(user_message):
             keyboard = get_dinner_times_keyboard(language)
+            print(f"⌨️  [BOTONS] Només sopar disponible")
             await update.message.reply_text(response, reply_markup=keyboard)
         # PRIORIDAD 4: Mostrar menú general (comida/cena)
         elif should_show_time_buttons(user_id, user_message, response):
             keyboard = get_time_slots_keyboard(language)
+            print(f"⌨️  [BOTONS] Mostrant dinar/sopar")
             await update.message.reply_text(response, reply_markup=keyboard)
         else:
             await update.message.reply_text(response)
@@ -115,7 +115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import traceback
         traceback.print_exc()
         await update.message.reply_text(
-            "Lo siento, hubo un error procesando tu mensaje. Por favor intenta de nuevo."
+            "Ho sento, hi ha hagut un error. Si us plau intenta-ho de nou."
         )
 
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,30 +127,37 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     callback_data = query.data
     
+    print(f"\n🔘 [USUARI] Botó premut: {callback_data}")
+    
     language = detect_language(get_conversation_state(user_id).get('last_message', 'hola'))
     
     # Manejar diferentes tipos de callbacks
     if callback_data == 'time_category_lunch':
         # Mostrar horarios de comida
         keyboard = get_lunch_times_keyboard(language)
-        text = "🍽️ Selecciona la hora de comida:" if language != 'ca' else "🍽️ Selecciona l'hora de dinar:"
+        text = "🍽️ Selecciona l'hora de dinar:"
+        print(f"🤖 [BOT] {text}")
         await query.edit_message_text(text=text, reply_markup=keyboard)
         
     elif callback_data == 'time_category_dinner':
         # Mostrar horarios de cena
         keyboard = get_dinner_times_keyboard(language)
-        text = "🌙 Selecciona la hora de cena:" if language != 'ca' else "🌙 Selecciona l'hora de sopar:"
+        text = "🌙 Selecciona l'hora de sopar:"
+        print(f"🤖 [BOT] {text}")
         await query.edit_message_text(text=text, reply_markup=keyboard)
         
     elif callback_data == 'back_to_categories':
         # Volver al menú principal de horarios
         keyboard = get_time_slots_keyboard(language)
-        text = "¿Comida o cena?" if language != 'ca' else "Dinar o sopar?"
+        text = "Dinar o sopar?"
+        print(f"🤖 [BOT] {text}")
         await query.edit_message_text(text=text, reply_markup=keyboard)
         
     elif callback_data.startswith('time_'):
         # Usuario seleccionó una hora específica
         time_selected = callback_data.replace('time_', '')
+        
+        print(f"⏰ [USUARI] Hora seleccionada: {time_selected}")
         
         # Remover el teclado
         await query.edit_message_text(text=f"✅ Hora seleccionada: {time_selected}")
@@ -165,13 +172,16 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             conversation_manager
         )
         
+        print(f"🤖 [BOT] {response}")
         await query.message.reply_text(response)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manejar mensajes de voz"""
     user_id = f"telegram:{update.effective_user.id}"
     
-    await update.message.reply_text("🎤 Escuchando tu mensaje...")
+    print(f"\n🎤 [USUARI] Missatge de veu rebut")
+    
+    await update.message.reply_text("🎤 Escoltant...")
     
     try:
         # Descargar el archivo de audio
@@ -183,7 +193,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio_response = requests.get(voice_url)
         
         if audio_response.status_code != 200:
-            await update.message.reply_text("No pude descargar el audio. Intenta de nuevo.")
+            await update.message.reply_text("No he pogut descarregar l'àudio. Intenta-ho de nou.")
             return
         
         # Guardar temporalmente
@@ -204,6 +214,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         transcribed_text = transcript.text
         
+        print(f"📝 [TRANSCRIPCIÓ] \"{transcribed_text}\"")
+        
         # Limpiar archivo temporal
         if os.path.exists(audio_path):
             os.remove(audio_path)
@@ -218,34 +230,43 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conversation_manager
         )
         
+        print(f"🤖 [BOT] {response}")
+        
         # Detectar si debemos mostrar botones
         language = detect_language(transcribed_text)
+        
+        # Mostrar solo el texto transcrito entre comillas, sin "Escuché:"
+        transcription_display = f'"{transcribed_text}"\n\n{response}'
         
         # PRIORIDAD 1: Si el usuario mencionó LUNCH/DINAR
         if should_show_time_buttons(user_id, transcribed_text, response) and should_show_lunch_directly(transcribed_text):
             keyboard = get_lunch_times_keyboard(language)
-            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+            print(f"⌨️  [BOTONS] Mostrant horaris de dinar")
+            await update.message.reply_text(transcription_display, reply_markup=keyboard)
         # PRIORIDAD 2: Si el usuario mencionó DINNER/SOPAR
         elif should_show_time_buttons(user_id, transcribed_text, response) and should_show_dinner_directly(transcribed_text):
             keyboard = get_dinner_times_keyboard(language)
-            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+            print(f"⌨️  [BOTONS] Mostrant horaris de sopar")
+            await update.message.reply_text(transcription_display, reply_markup=keyboard)
         # PRIORIDAD 3: Si es tarde y pide para HOY
         elif should_show_time_buttons(user_id, transcribed_text, response) and should_show_only_dinner(transcribed_text):
             keyboard = get_dinner_times_keyboard(language)
-            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+            print(f"⌨️  [BOTONS] Només sopar disponible")
+            await update.message.reply_text(transcription_display, reply_markup=keyboard)
         # PRIORIDAD 4: Menú general
         elif should_show_time_buttons(user_id, transcribed_text, response):
             keyboard = get_time_slots_keyboard(language)
-            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}", reply_markup=keyboard)
+            print(f"⌨️  [BOTONS] Mostrant dinar/sopar")
+            await update.message.reply_text(transcription_display, reply_markup=keyboard)
         else:
-            await update.message.reply_text(f"📝 Escuché: \"{transcribed_text}\"\n\n{response}")
+            await update.message.reply_text(transcription_display)
         
     except Exception as e:
         logger.error(f"❌ Error procesando audio: {e}")
         import traceback
         traceback.print_exc()
         await update.message.reply_text(
-            "No pude procesar el audio. ¿Puedes escribir tu mensaje?"
+            "No he pogut processar l'àudio. Pots escriure el teu missatge?"
         )
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -260,6 +281,9 @@ def main():
         return
     
     print("✅ Bot de Telegram inicializado")
+    print("="*60)
+    print("📱 LOGS DE CONVERSA ACTIVATS")
+    print("="*60)
     
     # Crear aplicación
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
