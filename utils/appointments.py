@@ -59,14 +59,14 @@ class AppointmentManager:
                     phone VARCHAR(50) NOT NULL,
                     client_name VARCHAR(100),
                     date DATE NOT NULL,
-                    start_time TIMESTAMP NOT NULL,
-                    end_time TIMESTAMP NOT NULL,
+                    start_time TIMESTAMPTZ NOT NULL,
+                    end_time TIMESTAMPTZ NOT NULL,
                     num_people INTEGER NOT NULL,
                     table_id INTEGER REFERENCES tables(id),
                     language VARCHAR(10),
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -76,9 +76,9 @@ class AppointmentManager:
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
                     phone VARCHAR(50) UNIQUE NOT NULL,
-                    name VARCHAR(100) NOT NULL,
-                    language VARCHAR(10) DEFAULT 'es',
-                    last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    name VARCHAR(100),
+                    language VARCHAR(10),
+                    last_visit TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -89,7 +89,7 @@ class AppointmentManager:
             """)
             if not cursor.fetchone():
                 # Si no existeix, afegir-la
-                cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10) DEFAULT 'es'")
+                cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10)")
                 conn.commit()
             
             # TAULA 4: CONVERSATIONS (historial de converses)
@@ -100,7 +100,7 @@ class AppointmentManager:
                     phone VARCHAR(50) NOT NULL,
                     role VARCHAR(20) NOT NULL,
                     content TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
