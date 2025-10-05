@@ -20,6 +20,7 @@ if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
     print("❌ ERROR: Variables de Twilio no configuradas")
 else:
     twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    print("✅ Cliente Twilio inicializado correctamente")
 
 # Inicializar gestores
 appointment_manager = AppointmentManager()
@@ -29,41 +30,34 @@ conversation_manager = ConversationManager()
 def home():
     return """
     <h1>WhatsApp AI Agent - Restaurante</h1>
-    <p>⚠️ Bot de WhatsApp TEMPORALMENT DESCONNECTAT per proves</p>
-    <p>✅ Bot de Telegram ACTIU</p>
-    <p>Webhook: <code>https://tu-dominio.railway.app/whatsapp</code></p>
+    <p>✅ Bot de WhatsApp ACTIVO</p>
+    <p>✅ Bot de Telegram ACTIVO</p>
+    <p>Webhook WhatsApp: <code>https://tu-dominio.railway.app/whatsapp</code></p>
     """
 
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_webhook():
-    """Endpoint principal - TEMPORALMENT DESCONNECTAT"""
+    """Endpoint principal que recibe mensajes de WhatsApp"""
     
-    from_number = request.values.get('From', '')
-    
-    resp = MessagingResponse()
-    resp.message("⚠️ WhatsApp bot temporalment desconnectat per manteniment. Utilitza el bot de Telegram mentrestant. Gràcies!")
-    
-    return str(resp)
-
-# COMENTAT TEMPORALMENT EL CODI DE WHATSAPP
-"""
-@app.route('/whatsapp', methods=['POST'])
-def whatsapp_webhook():
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
+    
+    print(f"📱 Mensaje WhatsApp de {from_number}: {incoming_msg}")
     
     resp = MessagingResponse()
     
     try:
         # Si hay audio, transcribirlo
         if media_url:
+            print(f"🎤 Transcribiendo audio...")
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
             auth_header = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
             
             transcribed_text = transcribe_audio(media_url, auth_header)
             
             if transcribed_text:
+                print(f"📝 Audio transcrito: {transcribed_text}")
                 incoming_msg = transcribed_text
             else:
                 resp.message("No pude entender el audio. ¿Puedes escribir tu mensaje?")
@@ -74,21 +68,27 @@ def whatsapp_webhook():
             return str(resp)
         
         # Procesar con IA
-        ai_response = process_message_with_ai(incoming_msg, from_number, appointment_manager, conversation_manager)
+        ai_response = process_message_with_ai(
+            incoming_msg, 
+            from_number, 
+            appointment_manager, 
+            conversation_manager
+        )
         
         resp.message(ai_response)
     
     except Exception as e:
         print(f"❌ Error en webhook: {e}")
+        import traceback
+        traceback.print_exc()
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
     
     return str(resp)
-"""
 
 @app.route('/health')
 def health():
     """Endpoint de salud"""
-    return {"status": "ok", "message": "Server is running - WhatsApp DISABLED"}
+    return {"status": "ok", "message": "WhatsApp bot active and running"}
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
