@@ -38,7 +38,7 @@ def transcribe_audio(audio_url, auth_header):
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language="ca"  # Catalá por defecto, Whisper detectará si es otro idioma
+                language="es"  # Catalá por defecto, Whisper detectará si es otro idioma
             )
         
         print(f"[OK] Transcripcion exitosa: {transcript.text}")
