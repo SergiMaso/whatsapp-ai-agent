@@ -1,0 +1,35 @@
+    def save_customer_language(self, phone, language):
+        """
+        Guardar l'idioma preferit d'un client
+        
+        IMPORTANT: Només guarda l'idioma, NO crea client amb nom "Usuario"
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Verificar si el client ja existeix
+            cursor.execute("SELECT name FROM customers WHERE phone = %s", (phone,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Client existent: només actualitzar idioma
+                cursor.execute("""
+                    UPDATE customers
+                    SET language = %s, last_visit = CURRENT_TIMESTAMP
+                    WHERE phone = %s
+                """, (language, phone))
+            else:
+                # Client nou: només guardar idioma sense nom
+                # Quan faci la reserva, es guardarà el nom real
+                cursor.execute("""
+                    INSERT INTO customers (phone, name, language, last_visit)
+                    VALUES (%s, '', %s, CURRENT_TIMESTAMP)
+                """, (phone, language))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"🌍 Idioma guardado: {phone} → {language}")
+        except Exception as e:
+            print(f"❌ Error guardando idioma: {e}")

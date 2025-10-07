@@ -9,17 +9,9 @@ from unidecode import unidecode
 
 load_dotenv()
 
-
-
 def detect_language(text):
     """
     Detecta l'idioma del text amb prioritat per espanyol i català
-    
-    Ordre de prioritat:
-    1. Paraules clau espanyoles
-    2. Paraules clau catalanes
-    3. Paraules clau angleses
-    4. Llibreria langdetect (últim recurs)
     """
     try:
         text_lower = text.lower().strip()
@@ -32,7 +24,7 @@ def detect_language(text):
         spanish_keywords = {
             'quiero', 'necesito', 'puedo', 'tengo', 'hoy', 'manana',
             'por', 'favor', 'gracias', 'buenos', 'dias', 'buenas', 'tardes',
-            'mesa', 'personas', 'comida', 'cena','quisiera',
+            'mesa', 'personas', 'reserva', 'comida', 'cena',
             'estoy', 'esta', 'somos', 'son', 'hacer',
             'noche', 'tarde', 'para', 'con', 'que', 'como',
             'cuando', 'donde', 'quien', 'cual', 'cuantos'
@@ -44,10 +36,11 @@ def detect_language(text):
         catalan_keywords = {
             'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
             'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
-            'taula', 'persones', 'dinar', 'sopar',
-            'nomes', 'tambe', 'pero', 'us', 'plau', 'moltes',
-            'estic', 'esta', 'som', 'son','fer','voldria',
-            'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar'
+            'taula', 'persones', 'reserva', 'dinar', 'sopar',
+            'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
+            'estic', 'esta', 'som', 'son',
+            'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar',
+            'dic', 'em'
         }
         if words_set & catalan_keywords:
             return 'ca'
@@ -65,24 +58,24 @@ def detect_language(text):
         # PRIORITAT 4: Usar langdetect com a últim recurs
         detected = detect(text_lower)
         
+        # Corregir falsos positius comuns
+        if detected in ['cy', 'tr', 'it', 'pt']:  # Galès, turc, italià, portuguès
+            return 'es'  # Default espanyol
+        
         return detected
         
     except LangDetectException:
         return 'es'
 
-
 def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
     Processa el missatge de l'usuari amb GPT per gestionar reserves.
-
-    Gestió de l'idioma:
-    - Si el client ja existeix → mantenir sempre el seu idioma.
-    - Si és un client nou:
-        1r missatge → detectar idioma i guardar-lo.
-        2n missatge → tornar a detectar; si ha canviat, actualitzar.
-        3r missatge i següents → no cal detectar més, es manté el guardat.
     """
 
+    # IMPORTANT: Netejar el prefix "whatsapp:" del telèfon
+    if phone.startswith('whatsapp:'):
+        phone = phone.replace('whatsapp:', '')
+    
     print(f"📝 Missatge rebut: '{message}'")
 
     # --- STEP 1: Gestió de l'idioma ---
@@ -90,18 +83,14 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     message_count = conversation_manager.get_message_count(phone)
 
     if saved_language:
-        # Client conegut → sempre manté el mateix idioma
         language = saved_language
         print(f"🌍 Client conegut - Idioma mantingut: {language}")
     else:
-        # Client nou → depèn del nombre de missatges
         if message_count == 0:
-            # Primer missatge → detectar i guardar
             language = detect_language(message)
             appointment_manager.save_customer_language(phone, language)
             print(f"👋 Primer missatge → Idioma detectat i guardat: {language}")
         elif message_count == 1:
-            # Segon missatge → detectar novament i actualitzar si canvia
             new_language = detect_language(message)
             old_language = appointment_manager.get_customer_language(phone)
             if new_language != old_language:
@@ -112,12 +101,9 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
                 language = old_language
                 print(f"✅ Segon missatge → idioma mantingut: {language}")
         else:
-            # Tercer missatge o més → no es torna a detectar
             language = appointment_manager.get_customer_language(phone)
             print(f"📌 Tercer missatge o més → idioma fix: {language}")
 
-    language_names = { 'es': 'español', 'en': 'inglés', 'ca': 'català', 'fr': 'francés' } 
-    lang_name = language_names.get(language, 'español')
     print(f"✅ Idioma final: {language}")
 
     # --- STEP 2: Obtenir info del client i reserves ---
@@ -141,19 +127,15 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
             customer_context = f"IMPORTANT: Aquest client ja és conegut. El seu nom és {customer_name}. Saluda'l sempre pel nom!"
         elif language == 'en':
             customer_context = f"IMPORTANT: This customer is known. Their name is {customer_name}. Always greet them by name!"
-        elif language == 'fr':
-            customer_context = f"IMPORTANT: Ce client est déjà connu. Son nom est {customer_name}. Saluez-le toujours par son nom!"
         else:
             customer_context = f"IMPORTANTE: Este cliente ya es conocido. Su nombre es {customer_name}. ¡Salúdalo siempre por su nombre!"
     else:
         if language == 'ca':
-            customer_context = "IMPORTANT: Aquest és un client NOU. Només saluda amb 'Hola!' fins que et digui el seu nom."
+            customer_context = "IMPORTANT: Aquest és un client NOU. NO tens el seu nom. Saluda amb 'Hola!' i pregunta educadament pel seu nom quan calgui fer la reserva."
         elif language == 'en':
-            customer_context = "IMPORTANT: This is a NEW customer. Just say 'Hello!' until they tell you their name."
-        elif language == 'fr':
-            customer_context = "IMPORTANT: C'est un NOUVEAU client. Dites simplement 'Bonjour!' jusqu'à ce qu'il vous le donne."
+            customer_context = "IMPORTANT: This is a NEW customer. You DON'T have their name. Say 'Hello!' and politely ask for their name when needed for the reservation."
         else:
-            customer_context = "IMPORTANTE: Este es un cliente NUEVO. Solo saluda con '¡Hola!' hasta que te diga su nombre."
+            customer_context = "IMPORTANTE: Este es un cliente NUEVO. NO tienes su nombre. Saluda con '¡Hola!' y pide educadamente su nombre cuando sea necesario para la reserva."
 
     # STEP 5: Construir context sobre reserves actives
     appointment_context = ""
@@ -166,137 +148,94 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         appointment_context = apt_contexts.get(language, apt_contexts['es'])
     
     # STEP 6: Construir system prompts per cada idioma
-
     system_prompts = {
-        'ca': f"""Ets un ASSISTENT VIRTUAL per a la gestió de RESERVES d’un restaurant.
+        'ca': f"""Ets un assistent virtual per a reserves d'un restaurant.
 
-    INSTRUCCIONS GENERALS:
-    - Has d’actuar com un assistent humà, amable, educat i eficient.
-    - Comunica’t SEMPRE en el mateix idioma que el client.
-    - Si el client és nou, NO diguis cap nom fins que ell te’l proporcioni.
-    - Si el client ja és conegut, saluda’l pel seu nom.
-    - Mantén un to càlid, professional i proper.
-    - No facis accions fins que tinguis totes les dades necessàries (persones, data, hora, nom).
+DATA ACTUAL: Avui és {day_name} {today_str}.
 
-    DATA ACTUAL: Avui és {day_name} {today_str}.
+{customer_context}{appointment_context}
 
-    {customer_context}{appointment_context}
+INFORMACIÓ DEL RESTAURANT:
+- Capacitat: 20 taules de 4 persones i 8 taules de 2 persones
+- MÀXIM 4 persones per reserva
+- Horaris:
+  * Dinar: 12:00 a 15:00
+  * Sopar: 19:00 a 22:30
 
-    INFORMACIÓ DEL RESTAURANT:
-    - Capacitat total: 20 taules de 4 persones i 8 taules de 2 persones.
-    - Màxim: 4 persones per reserva.
-    - Horaris disponibles:
-    * Dinar: de 12:00 a 15:00
-    * Sopar: de 19:00 a 22:30
+FUNCIONS DISPONIBLES:
+1. create_appointment - Crear nova reserva
+2. update_appointment - Modificar reserva existent
+3. list_appointments - Veure reserves
+4. cancel_appointment - Cancel·lar reserva
 
-    FUNCIONS DISPONIBLES (pots cridar aquestes funcions quan sigui necessari):
-    1. create_appointment – Crear una nova reserva.
-    2. update_appointment – Modificar una reserva existent (NO cancel·lar).
-    3. list_appointments – Mostrar reserves actuals.
-    4. cancel_appointment – Cancel·lar una reserva.
+PROCÉS DE RESERVA:
+1. Saluda (si és client nou, NO diguis cap nom)
+2. Pregunta per quantes persones 
+3. Pregunta quin dia
+4. Pregunta quin horari i hora específica
+5. Pregunta el nom (només si no el tens i abans de crear la reserva)
+6. Confirma tots els detalls abans de crear
 
-    PROCÉS RECOMANAT DE RESERVA:
-    1. Saluda el client.
-    2. Pregunta per a quantes persones és la reserva (màxim 4).
-    3. Pregunta quin dia vol venir.
-    4. Pregunta per l’horari (dinar o sopar) i l’hora exacta.
-    5. Si no tens el seu nom, demana’l.
-    6. Confirma TOTS els detalls abans de crear la reserva.
-    7. Si el client vol modificar una reserva existent, utilitza update_appointment amb l’ID corresponent (no cal cancel·lar-la primer).
+SÉ càlid, professional i proper.""",
+        
+        'es': f"""Eres un asistente virtual para reservas de un restaurante. 
 
-    IMPORTANT:
-    - NO inventis informació.
-    - NO assumeixis dades que el client no hagi confirmat.
-    - Si no entens alguna cosa, demana aclariments.
+FECHA ACTUAL: Hoy es {day_name} {today_str}.
 
-    SÉ natural, atent i útil en tot moment.""",
+{customer_context}{appointment_context}
 
-        'es': f"""Eres un ASISTENTE VIRTUAL para la gestión de RESERVAS de un restaurante.
+INFORMACIÓN DEL RESTAURANTE:
+- Capacidad: 20 mesas de 4 personas y 8 mesas de 2 personas
+- MÁXIMO 4 personas por reserva
+- Horarios:
+  * Comida: 12:00 a 15:00
+  * Cena: 19:00 a 22:30
 
-    INSTRUCCIONES GENERALES:
-    - Actúa como un asistente humano, amable, educado y eficiente.
-    - Comunícate SIEMPRE en el mismo idioma que el cliente.
-    - Si el cliente es nuevo, NO digas ningún nombre hasta que te lo diga.
-    - Si el cliente ya es conocido, salúdalo por su nombre.
-    - Mantén un tono cálido, profesional y cercano.
-    - No ejecutes acciones hasta tener todos los datos necesarios (personas, fecha, hora, nombre).
+FUNCIONES DISPONIBLES:
+1. create_appointment - Crear nueva reserva
+2. update_appointment - Modificar reserva existente
+3. list_appointments - Ver reservas
+4. cancel_appointment - Cancelar reserva
 
-    FECHA ACTUAL: Hoy es {day_name} {today_str}.
+PROCESO DE RESERVA:
+1. Saluda (si es cliente nuevo, NO digas ningún nombre)
+2. Pregunta para cuántas personas (máximo 4)
+3. Pregunta qué día
+4. Pregunta qué horario y hora específica
+5. Pregunta el nombre (solo si no lo tienes y antes de crear la reserva)
+6. Confirma todos los detalles antes de crear
 
-    {customer_context}{appointment_context}
+SÉ cálido, profesional y cercano.""",
+        
+        'en': f"""You are a virtual assistant for a restaurant reservations. 
 
-    INFORMACIÓN DEL RESTAURANTE:
-    - Capacidad total: 20 mesas de 4 personas y 8 mesas de 2 personas.
-    - Máximo: 4 personas por reserva.
-    - Horarios:
-    * Comida: 12:00 a 15:00
-    * Cena: 19:00 a 22:30
+CURRENT DATE: Today is {day_name} {today_str}
 
-    FUNCIONES DISPONIBLES:
-    1. create_appointment – Crear nueva reserva.
-    2. update_appointment – Modificar reserva existente (NO cancelar).
-    3. list_appointments – Ver reservas.
-    4. cancel_appointment – Cancelar reserva.
+{customer_context}{appointment_context}
 
-    PROCESO RECOMENDADO:
-    1. Saluda al cliente.
-    2. Pregunta para cuántas personas (máximo 4).
-    3. Pregunta qué día.
-    4. Pregunta qué horario (comida o cena) y hora específica.
-    5. Si no tienes su nombre, pídeselo.
-    6. Confirma todos los detalles antes de crear la reserva.
-    7. Si el cliente quiere modificar una reserva, usa update_appointment (no hace falta cancelar primero).
+RESTAURANT INFO:
+- Capacity: 20 tables of 4 people and 8 tables of 2 people
+- MAXIMUM 4 people per reservation
+- Hours:
+  * Lunch: 12:00 to 15:00
+  * Dinner: 19:00 to 22:30
 
-    IMPORTANTE:
-    - NO inventes información.
-    - NO asumas datos no confirmados.
-    - Si no entiendes algo, pide aclaración.
+AVAILABLE FUNCTIONS:
+1. create_appointment - Create new reservation
+2. update_appointment - Modify existing reservation
+3. list_appointments - View reservations
+4. cancel_appointment - Cancel reservation
 
-    SÉ cálido, profesional y cercano.""",
+RESERVATION PROCESS:
+1. Greet (if new customer, DON'T say any name)
+2. Ask for how many people (maximum 4)
+3. Ask which day
+4. Ask which time slot and specific time
+5. Ask for name (only if you don't have it and before creating reservation)
+6. Confirm all details before creating
 
-        'en': f"""You are a VIRTUAL ASSISTANT for managing RESTAURANT RESERVATIONS.
-
-    GENERAL INSTRUCTIONS:
-    - Act as a polite, friendly, and efficient human assistant.
-    - ALWAYS reply in the same language as the customer.
-    - If the customer is new, DO NOT say any name until they give you theirs.
-    - If the customer is known, greet them by name.
-    - Maintain a warm, professional, and natural tone.
-    - Do not execute actions until all details are confirmed (people, date, time, name).
-
-    CURRENT DATE: Today is {day_name} {today_str}.
-
-    {customer_context}{appointment_context}
-
-    RESTAURANT INFORMATION:
-    - Total capacity: 20 tables of 4 people and 8 tables of 2 people.
-    - Maximum 4 people per reservation.
-    - Opening hours:
-    * Lunch: 12:00 to 15:00
-    * Dinner: 19:00 to 22:30
-
-    AVAILABLE FUNCTIONS:
-    1. create_appointment – Create a new reservation.
-    2. update_appointment – Modify an existing reservation (DO NOT cancel).
-    3. list_appointments – View existing reservations.
-    4. cancel_appointment – Cancel a reservation.
-
-    RECOMMENDED RESERVATION FLOW:
-    1. Greet the customer.
-    2. Ask for the number of people (maximum 4).
-    3. Ask for the day.
-    4. Ask for the time slot (lunch or dinner) and exact time.
-    5. Ask for the name (if not already known).
-    6. Confirm ALL details before creating the reservation.
-    7. If the customer wants to modify a booking, use update_appointment with the reservation ID (no need to cancel first).
-
-    IMPORTANT:
-    - DO NOT invent or assume any information.
-    - Ask for clarification if needed.
-
-    BE warm, professional, and friendly at all times."""
+BE warm, professional and friendly."""
     }
-
     
     system_prompt = system_prompts.get(language, system_prompts['es'])
     
@@ -308,9 +247,8 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
-        # FIX: Canviar model i eliminar temperature
         response = client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             messages=messages,
             tools=[
                 {
@@ -390,6 +328,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
                     }
                     return error_msgs.get(language, error_msgs['es'])
                 
+                # IMPORTANT: Guardar nom del client
                 appointment_manager.save_customer_info(phone, function_args.get('client_name'))
                 
                 result = appointment_manager.create_appointment(
