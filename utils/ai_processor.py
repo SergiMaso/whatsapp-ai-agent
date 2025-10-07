@@ -44,8 +44,8 @@ def detect_language(text):
         catalan_keywords = {
             'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
             'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
-            'taula', 'persones', 'reserva', 'dinar', 'sopar',
-            'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
+            'taula', 'persones', 'dinar', 'sopar',
+            'nomes', 'tambe', 'pero', 'us', 'plau', 'moltes',
             'estic', 'esta', 'som', 'son','fer','voldria',
             'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar'
         }
