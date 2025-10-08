@@ -51,7 +51,7 @@ def get_lunch_times_keyboard(language):
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_dinner_times_keyboard(language=):
+def get_dinner_times_keyboard(language):
     """
     Horarios de cena: 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00, 22:30
     """
@@ -76,7 +76,7 @@ def get_dinner_times_keyboard(language=):
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_confirmation_keyboard(language=):
+def get_confirmation_keyboard(language):
     """
     Botones de confirmación Sí/No
     """
