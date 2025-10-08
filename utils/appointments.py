@@ -159,7 +159,11 @@ class AppointmentManager:
     
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1):
         try:
+            print(date, time)
             start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+            print(start_time)
+            print(start_time + timedelta(hours=duration_hours))
+            print(type(start_time))
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
             
