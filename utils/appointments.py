@@ -159,11 +159,8 @@ class AppointmentManager:
     
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1):
         try:
-            print(date, time)
+            # Convertir date i time a TIMESTAMP
             start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-            print(start_time)
-            print(start_time + timedelta(hours=duration_hours))
-            print(type(start_time))
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
             
@@ -175,14 +172,23 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # IMPORTANT: Guardar amb timezone UTC per evitar problemes
             cursor.execute("""
                 INSERT INTO appointments 
                 (phone, client_name, date, start_time, end_time, num_people, table_id, language, status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
+                RETURNING id, start_time, end_time
             """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, 'confirmed'))
             
-            appointment_id = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            appointment_id = result[0]
+            saved_start = result[1]
+            saved_end = result[2]
+            
+            # Debug: Verificar què s'ha guardat
+            print(f"✅ Reserva creada: ID={appointment_id}")
+            print(f"   Input: {start_time} -> Guardat: {saved_start}")
+            
             conn.commit()
             cursor.close()
             conn.close()

@@ -11,7 +11,8 @@ load_dotenv()
 
 def detect_language(text):
     """
-    Detecta l'idioma del text amb prioritat per espanyol i català
+    Detecta l'idioma del text comptant coincidències amb keywords
+    Retorna l'idioma amb més paraules úniques detectades
     """
     try:
         text_lower = text.lower().strip()
@@ -20,47 +21,54 @@ def detect_language(text):
         words = re.findall(r"\b\w+\b", text_noaccents)
         words_set = set(words)
 
-        # PRIORITAT 1: Paraules espanyoles
+        # Keywords espanyoles (sense paraules comunes amb català)
         spanish_keywords = {
             'quiero', 'necesito', 'puedo', 'tengo', 'hoy', 'manana',
             'por', 'favor', 'gracias', 'buenos', 'dias', 'buenas', 'tardes',
-            'mesa', 'personas', 'reserva', 'comida', 'cena',
-            'estoy', 'esta', 'somos', 'son', 'hacer',
+            'mesa', 'personas', 'comida', 'cena',
+            'estoy', 'somos', 'son', 'hacer',
             'noche', 'tarde', 'para', 'con', 'que', 'como',
             'cuando', 'donde', 'quien', 'cual', 'cuantos'
         }
-        if words_set & spanish_keywords:
-            return 'es'
         
-        # PRIORITAT 2: Paraules catalanes
+        # Keywords catalanes
         catalan_keywords = {
             'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
             'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
-            'taula', 'persones', 'reserva', 'dinar', 'sopar',
+            'taula', 'persones', 'dinar', 'sopar',
             'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
-            'estic', 'esta', 'som', 'son',
+            'estic', 'som',
             'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar',
-            'dic', 'em'
+            'dic', 'em', 'fer'
         }
-        if words_set & catalan_keywords:
-            return 'ca'
         
-        # PRIORITAT 3: Paraules angleses
+        # Keywords angleses
         english_keywords = {
             'want', 'need', 'can', 'have', 'today', 'tomorrow',
             'please', 'thank', 'you', 'table', 'people', 'reservation',
             'hello', 'good', 'morning', 'evening',
             'how', 'when', 'where', 'who', 'what', 'many'
         }
-        if words_set & english_keywords:
+        
+        # Comptar coincidències
+        spanish_matches = len(words_set & spanish_keywords)
+        catalan_matches = len(words_set & catalan_keywords)
+        english_matches = len(words_set & english_keywords)
+        
+        # Retornar idioma amb més coincidències
+        if catalan_matches > spanish_matches and catalan_matches > english_matches:
+            return 'ca'
+        elif spanish_matches > english_matches:
+            return 'es'
+        elif english_matches > 0:
             return 'en'
         
-        # PRIORITAT 4: Usar langdetect com a últim recurs
+        # Si no hi ha coincidències clares, usar langdetect
         detected = detect(text_lower)
         
         # Corregir falsos positius comuns
-        if detected in ['cy', 'tr', 'it', 'pt']:  # Galès, turc, italià, portuguès
-            return 'es'  # Default espanyol
+        if detected in ['cy', 'tr', 'it', 'pt']:
+            return 'es'
         
         return detected
         
@@ -73,9 +81,11 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     """
 
 
-    # IMPORTANT: Netejar el prefix "whatsapp:" del telèfon
+    # IMPORTANT: Netejar prefixos del telèfon
     if phone.startswith('whatsapp:'):
         phone = phone.replace('whatsapp:', '')
+    elif phone.startswith('telegram:'):
+        phone = phone.replace('telegram:', '')
     
     print(f"📝 Missatge rebut: '{message}'")
 
@@ -283,14 +293,14 @@ Be warm, professional, and friendly."""
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=messages,
             tools=[
                 {
                     "type": "function",
                     "function": {
                         "name": "create_appointment",
-                        "description": "Crear una reserva nova quan tinguis TOTS els datos necessaris",
+                        "description": "Crear una reserva nova quan tinguis TOTES les dades necessaris",
                         "parameters": {
                             "type": "object",
                             "properties": {
