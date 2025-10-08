@@ -408,8 +408,41 @@ class ConversationManager:
     def get_connection(self):
         return psycopg2.connect(self.database_url)
     
-    def save_message(self, phone, role, content):
+    def clean_old_messages(self):
+        """
+        Eliminar missatges de més de 10 minuts de TOTS els usuaris
+        S'executa automàticament abans de guardar nous missatges
+        """
         try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Eliminar missatges creats fa més de 10 minuts
+            cursor.execute("""
+                DELETE FROM conversations 
+                WHERE created_at < NOW() - INTERVAL '10 minutes'
+            """)
+            
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"🧹 Netejats {deleted_count} missatges antics (>10 min)")
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"❌ Error limpiando mensajes antiguos: {e}")
+    
+    def save_message(self, phone, role, content):
+        """
+        Guardar un missatge a l'historial
+        
+        Abans de guardar, neteja missatges antics automàticament
+        """
+        try:
+            # IMPORTANT: Netejar missatges antics abans de guardar
+            self.clean_old_messages()
+            
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("INSERT INTO conversations (phone, role, content) VALUES (%s, %s, %s)", (phone, role, content))
@@ -420,10 +453,23 @@ class ConversationManager:
             print(f"❌ Error guardando mensaje: {e}")
     
     def get_history(self, phone, limit=10):
+        """
+        Obtenir historial de conversa NOMÉS dels últims 10 minuts
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT role, content FROM conversations WHERE phone = %s ORDER BY created_at DESC LIMIT %s", (phone, limit))
+            
+            # Només obtenir missatges dels últims 10 minuts
+            cursor.execute("""
+                SELECT role, content 
+                FROM conversations 
+                WHERE phone = %s 
+                  AND created_at > NOW() - INTERVAL '10 minutes'
+                ORDER BY created_at DESC 
+                LIMIT %s
+            """, (phone, limit))
+            
             messages = cursor.fetchall()
             cursor.close()
             conn.close()
@@ -444,10 +490,22 @@ class ConversationManager:
             print(f"❌ Error limpiando historial: {e}")
     
     def get_message_count(self, phone):
+        """
+        Comptar missatges dels últims 10 minuts
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM conversations WHERE phone = %s AND role = 'user'", (phone,))
+            
+            # Comptar només missatges dels últims 10 minuts
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM conversations 
+                WHERE phone = %s 
+                  AND role = 'user'
+                  AND created_at > NOW() - INTERVAL '10 minutes'
+            """, (phone,))
+            
             count = cursor.fetchone()[0]
             cursor.close()
             conn.close()

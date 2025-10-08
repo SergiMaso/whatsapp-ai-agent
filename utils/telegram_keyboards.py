@@ -5,7 +5,7 @@ Muestra opciones de horario cuando el usuario no especifica una hora
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-def get_time_slots_keyboard(language='es'):
+def get_time_slots_keyboard(language):
     """
     Generar teclado con opciones de horario
     """
@@ -27,7 +27,7 @@ def get_time_slots_keyboard(language='es'):
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_lunch_times_keyboard(language='es'):
+def get_lunch_times_keyboard(language):
     """
     Horarios de comida: 12:00, 12:30, 13:00, 13:30, 14:00, 14:30, 15:00
     """
@@ -51,7 +51,7 @@ def get_lunch_times_keyboard(language='es'):
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_dinner_times_keyboard(language='es'):
+def get_dinner_times_keyboard(language=):
     """
     Horarios de cena: 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00, 22:30
     """
@@ -76,7 +76,7 @@ def get_dinner_times_keyboard(language='es'):
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_confirmation_keyboard(language='es'):
+def get_confirmation_keyboard(language=):
     """
     Botones de confirmación Sí/No
     """

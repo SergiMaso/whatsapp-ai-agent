@@ -190,6 +190,7 @@ PROCÉS DE RESERVA:
 
 
 
+
 Sigues càlid, professional i proper.""",
         
         'es': f"""Eres un asistente virtual para reservas de un restaurante.
