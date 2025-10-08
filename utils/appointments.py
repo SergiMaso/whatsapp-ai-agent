@@ -52,14 +52,14 @@ class AppointmentManager:
                     phone VARCHAR(50) NOT NULL,
                     client_name VARCHAR(100),
                     date DATE NOT NULL,
-                    start_time TIMESTAMP NOT NULL,
-                    end_time TIMESTAMP NOT NULL,
+                    start_time TIMESTAMPTZ NOT NULL,
+                    end_time TIMESTAMPTZ NOT NULL,
                     num_people INTEGER NOT NULL,
                     table_id INTEGER REFERENCES tables(id),
                     language VARCHAR(10),
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -164,10 +164,6 @@ class AppointmentManager:
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
             
-            # Convertir a string per enviar a PostgreSQL
-            start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-            end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
-            
             customer_language = self.get_customer_language(phone) or 'es'
             table = self.find_available_table(start_time, end_time, num_people)
             if not table:
@@ -176,13 +172,12 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # IMPORTANT: Enviar com a string perquè PostgreSQL ho interpreti correctament
             cursor.execute("""
                 INSERT INTO appointments 
                 (phone, client_name, date, start_time, end_time, num_people, table_id, language, status)
-                VALUES (%s, %s, %s, %s::timestamp, %s::timestamp, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, start_time, end_time
-            """, (phone, client_name, date_only, start_time_str, end_time_str, num_people, table['id'], customer_language, 'confirmed'))
+            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, 'confirmed'))
             
             result = cursor.fetchone()
             appointment_id = result[0]
@@ -191,8 +186,8 @@ class AppointmentManager:
             
             # Debug: Verificar què s'ha guardat
             print(f"✅ Reserva creada: ID={appointment_id}")
-            print(f"   Input: {start_time_str} -> Guardat: {saved_start}")
-            print(f"   Tipus guardat: {type(saved_start)}")
+            print(f"   Input: {start_time} -> Guardat: {saved_start}")
+            print(f"   Timezone: {saved_start.tzinfo if hasattr(saved_start, 'tzinfo') else 'No timezone'}")
             
             conn.commit()
             cursor.close()
