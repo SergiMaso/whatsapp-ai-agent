@@ -6,7 +6,7 @@ from openai import OpenAI
 from datetime import datetime
 import re
 from unidecode import unidecode
-
+from utils.appointments import AppointmentManager, ConversationManager
 load_dotenv()
 
 def detect_language(text):
@@ -71,6 +71,10 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     """
     Processa el missatge de l'usuari amb GPT per gestionar reserves.
     """
+    from utils.appointments import AppointmentManager, ConversationManager
+    # Inicializar gestores
+    appointment_manager = AppointmentManager()
+    conversation_manager = ConversationManager()
 
     # IMPORTANT: Netejar el prefix "whatsapp:" del telèfon
     if phone.startswith('whatsapp:'):
