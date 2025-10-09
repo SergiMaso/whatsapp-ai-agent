@@ -6,12 +6,13 @@ from openai import OpenAI
 from datetime import datetime
 import re
 from unidecode import unidecode
-
+from utils.appointments import AppointmentManager, ConversationManager
 load_dotenv()
 
 def detect_language(text):
     """
-    Detecta l'idioma del text amb prioritat per espanyol i català
+    Detecta l'idioma del text comptant coincidències amb keywords
+    Retorna l'idioma amb més paraules úniques detectades
     """
     try:
         text_lower = text.lower().strip()
@@ -20,65 +21,70 @@ def detect_language(text):
         words = re.findall(r"\b\w+\b", text_noaccents)
         words_set = set(words)
 
-        # PRIORITAT 1: Paraules espanyoles
+        # Keywords espanyoles (sense paraules comunes amb català)
         spanish_keywords = {
             'quiero', 'necesito', 'puedo', 'tengo', 'hoy', 'manana',
             'por', 'favor', 'gracias', 'buenos', 'dias', 'buenas', 'tardes',
-            'mesa', 'personas', 'reserva', 'comida', 'cena',
-            'estoy', 'esta', 'somos', 'son', 'hacer',
+            'mesa', 'personas', 'comida', 'cena',
+            'estoy', 'somos', 'son', 'hacer',
             'noche', 'tarde', 'para', 'con', 'que', 'como',
             'cuando', 'donde', 'quien', 'cual', 'cuantos'
         }
-        if words_set & spanish_keywords:
-            return 'es'
         
-        # PRIORITAT 2: Paraules catalanes
+        # Keywords catalanes
         catalan_keywords = {
             'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
             'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
-            'taula', 'persones', 'reserva', 'dinar', 'sopar',
+            'taula', 'persones', 'dinar', 'sopar',
             'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
-            'estic', 'esta', 'som', 'son',
+            'estic', 'som',
             'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar',
-            'dic', 'em'
+            'dic', 'em', 'fer'
         }
-        if words_set & catalan_keywords:
-            return 'ca'
         
-        # PRIORITAT 3: Paraules angleses
+        # Keywords angleses
         english_keywords = {
             'want', 'need', 'can', 'have', 'today', 'tomorrow',
             'please', 'thank', 'you', 'table', 'people', 'reservation',
             'hello', 'good', 'morning', 'evening',
             'how', 'when', 'where', 'who', 'what', 'many'
         }
-        if words_set & english_keywords:
+        
+        # Comptar coincidències
+        spanish_matches = len(words_set & spanish_keywords)
+        catalan_matches = len(words_set & catalan_keywords)
+        english_matches = len(words_set & english_keywords)
+        
+        # Retornar idioma amb més coincidències
+        if catalan_matches > spanish_matches and catalan_matches > english_matches:
+            return 'ca'
+        elif spanish_matches > english_matches:
+            return 'es'
+        elif english_matches > 0:
             return 'en'
         
-        # PRIORITAT 4: Usar langdetect com a últim recurs
+        # Si no hi ha coincidències clares, usar langdetect
         detected = detect(text_lower)
         
         # Corregir falsos positius comuns
-        if detected in ['cy', 'tr', 'it', 'pt']:  # Galès, turc, italià, portuguès
-            return 'es'  # Default espanyol
+        if detected in ['cy', 'tr', 'it', 'pt']:
+            return 'es'
         
         return detected
         
     except LangDetectException:
         return 'es'
 
-def process_message_with_ai(message, phone):
+def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
     Processa el missatge de l'usuari amb GPT per gestionar reserves.
     """
 
-    from utils.appointments import AppointmentManager, ConversationManager
-    appointment_manager = AppointmentManager()
-    conversation_manager = ConversationManager()
-
-    # IMPORTANT: Netejar el prefix "whatsapp:" del telèfon
+    # IMPORTANT: Netejar prefixos del telèfon
     if phone.startswith('whatsapp:'):
         phone = phone.replace('whatsapp:', '')
+    elif phone.startswith('telegram:'):
+        phone = phone.replace('telegram:', '')
     
     print(f"📝 Missatge rebut: '{message}'")
 
@@ -146,9 +152,9 @@ def process_message_with_ai(message, phone):
     appointment_context = ""
     if latest_appointment:
         apt_contexts = {
-            'ca': f"\n\nRECORDA: Aquest usuari té una reserva activa:\n- ID: {latest_appointment['id']}\n- Data: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Persones: {latest_appointment['num_people']}\n\nSi demana canviar/modificar la reserva, usa update_appointment amb aquest ID.",
-            'en': f"\n\nREMEMBER: This user has an active reservation:\n- ID: {latest_appointment['id']}\n- Date: {latest_appointment['date']}\n- Time: {latest_appointment['time']}\n- People: {latest_appointment['num_people']}\n\nIf they ask to change/modify, use update_appointment with this ID.",
-            'es': f"\n\nRECUERDA: Este usuario tiene una reserva activa:\n- ID: {latest_appointment['id']}\n- Fecha: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Personas: {latest_appointment['num_people']}\n\nSi pide cambiar/modificar, usa update_appointment con este ID."
+            'ca': f"\n\nINFO: Aquest usuari té una reserva recent:\n- ID: {latest_appointment['id']}\n- Data: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Persones: {latest_appointment['num_people']}\n\nPOT FER MÉS RESERVES! Si vol fer una NOVA reserva, usa create_appointment. Si vol MODIFICAR aquesta reserva, usa update_appointment.",
+            'en': f"\n\nINFO: This user has a recent reservation:\n- ID: {latest_appointment['id']}\n- Date: {latest_appointment['date']}\n- Time: {latest_appointment['time']}\n- People: {latest_appointment['num_people']}\n\nCAN MAKE MORE RESERVATIONS! If they want a NEW reservation, use create_appointment. If they want to MODIFY this one, use update_appointment.",
+            'es': f"\n\nINFO: Este usuario tiene una reserva reciente:\n- ID: {latest_appointment['id']}\n- Fecha: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Personas: {latest_appointment['num_people']}\n\n¡PUEDE HACER MÁS RESERVAS! Si quiere hacer una NUEVA reserva, usa create_appointment. Si quiere MODIFICAR esta reserva, usa update_appointment."
         }
         appointment_context = apt_contexts.get(language, apt_contexts['es'])
     
@@ -167,86 +173,114 @@ INFORMACIÓ DEL RESTAURANT:
   * Dinar: 12:00 a 15:00
   * Sopar: 19:00 a 22:30
 
+
 FUNCIONS DISPONIBLES:
-1. create_appointment - Crear nova reserva
-2. update_appointment - Modificar reserva existent
-3. list_appointments - Veure reserves
-4. cancel_appointment - Cancel·lar reserva
-5. save_customer_language - Guardar idioma i nom del client
+
+1. create_appointment – Crear reserva nova
+2. update_appointment – Modificar reserva existent
+3. list_appointments – Veure reserves de l’usuari
+4. cancel_appointment – Cancel·lar reserva existent
+5. save_customer_language – Guardar idioma i nom del client
 
 PROCÉS DE RESERVA:
-1. Saluda sense demanar què vol. Si el client proporciona més informació, contesta continauant amb la conversa.
-2. Si vol fer una reserva, pregunta per la data, la hora i el número de persones. 
-3. Si ja saps el nom, pregunta de confimrar les dades de la reserva. Utilitza create_appointment.
-4. Si no saps el nom, pregunta per el nom. Quan el sàpigues demana de confirmar les dades de la reserva. Utilitza create_appointment.
-5. Si vol modificar una reserva, pregunta per la data, la hora i el número de persones de la nova reserva. 
-6. Confirma els detalls de la nova reserva. Utilitza update_appointment.
-7. Si vol cancel·lar una reserva, ensenya-li les reserves que té. utilitza list_appointments.
-8. Demana quina reserva vol cancel·lar. Utilitza cancel_appointment.
-9. Si et demana a quina hora o quan té la reserva, ensenya la informació de les reserves actives. Utilitza list_appointments.
-10. Si et demana de canviar d'idioma, canvia i actualitza el idioma. Utilitza save_customer_language.
+
+1. Saluda el client inicialment sense preguntar què vol. Respon només si proporciona informació addicional.
+2. Detecta la intenció del client: reserva, modificació, cancel·lació o consulta.
+3. Si vol fer una reserva:
+
+   * Pregunta per la data, hora i número de persones.
+   * Si ja saps el nom, confirma les dades i crida create_appointment.
+   * Si no saps el nom, pregunta per ell. Guarda només noms vàlids i després confirma les dades amb create_appointment.
+4. Si vol modificar una reserva: pregunta la nova data, hora i número de persones, confirma els detalls i crida update_appointment.
+5. Si vol cancel·lar una reserva: mostra les reserves amb list_appointments, pregunta quina vol cancel·lar i crida cancel_appointment.
+6. Si vol consultar informació sobre la seva reserva (hora, data, persones), mostra la informació de les reserves actives amb list_appointments.
+7. Si demana canviar l’idioma, actualitza’l amb save_customer_language.
 
 
-SÉ càlid, professional i proper.""",
+
+
+
+
+Sigues càlid, professional i proper.""",
         
-        'es': f"""Eres un asistente virtual para reservas de un restaurante. 
+        'es': f"""Eres un asistente virtual para reservas de un restaurante.
 
 FECHA ACTUAL: Hoy es {day_name} {today_str}.
 
 {customer_context}{appointment_context}
 
 INFORMACIÓN DEL RESTAURANTE:
-- Capacidad: 20 mesas de 4 personas y 8 mesas de 2 personas
-- MÁXIMO 4 personas por reserva
-- Horarios:
+
+* Capacidad: 20 mesas de 4 personas y 8 mesas de 2 personas
+* MÁXIMO 4 personas por reserva
+* Horarios:
+
   * Comida: 12:00 a 15:00
   * Cena: 19:00 a 22:30
 
 FUNCIONES DISPONIBLES:
-1. create_appointment - Crear nueva reserva
-2. update_appointment - Modificar reserva existente
-3. list_appointments - Ver reservas
-4. cancel_appointment - Cancelar reserva
+
+1. create_appointment – Crear nueva reserva
+2. update_appointment – Modificar reserva existente
+3. list_appointments – Ver reservas del usuario
+4. cancel_appointment – Cancelar reserva existente
+5. save_customer_language – Guardar idioma y nombre del cliente
 
 PROCESO DE RESERVA:
-1. Saluda (si es cliente nuevo, NO digas ningún nombre)
-2. Pregunta para cuántas personas (máximo 4)
-3. Pregunta qué día
-4. Pregunta qué horario y hora específica
-5. Pregunta el nombre (solo si no lo tienes y antes de crear la reserva)
-6. Confirma todos los detalles antes de crear
 
-SÉ cálido, profesional y cercano.""",
+1. Saluda al cliente inicialmente sin preguntar qué quiere. Responde solo si proporciona información adicional.
+2. Detecta la intención del cliente: reserva, modificación, cancelación o consulta.
+3. Si quiere hacer una reserva:
+
+   * Pregunta por la fecha, hora y número de personas.
+   * Si ya sabes su nombre, confirma los datos y llama a create_appointment.
+   * Si no sabes su nombre, pregúntalo. Guarda solo nombres válidos y después confirma los datos con create_appointment.
+4. Si quiere modificar una reserva: pregunta la nueva fecha, hora y número de personas, confirma los detalles y llama a update_appointment.
+5. Si quiere cancelar una reserva: muestra las reservas con list_appointments, pregunta cuál desea cancelar y llama a cancel_appointment.
+6. Si quiere consultar información sobre sus reservas (hora, fecha, personas), muestra la información de las reservas activas con list_appointments.
+7. Si pide cambiar el idioma, actualízalo con save_customer_language.
+
+Sé cálido, profesional y cercano.""",
         
-        'en': f"""You are a virtual assistant for a restaurant reservations. 
+        'en': f"""You are a virtual assistant for restaurant reservations.
 
-CURRENT DATE: Today is {day_name} {today_str}
+CURRENT DATE: Today is {day_name} {today_str}.
 
 {customer_context}{appointment_context}
 
-RESTAURANT INFO:
-- Capacity: 20 tables of 4 people and 8 tables of 2 people
-- MAXIMUM 4 people per reservation
-- Hours:
+RESTAURANT INFORMATION:
+
+* Capacity: 20 tables for 4 people and 8 tables for 2 people
+* MAXIMUM 4 people per reservation
+* Hours:
+
   * Lunch: 12:00 to 15:00
   * Dinner: 19:00 to 22:30
 
 AVAILABLE FUNCTIONS:
-1. create_appointment - Create new reservation
-2. update_appointment - Modify existing reservation
-3. list_appointments - View reservations
-4. cancel_appointment - Cancel reservation
+
+1. create_appointment – Create a new reservation
+2. update_appointment – Modify an existing reservation
+3. list_appointments – View user reservations
+4. cancel_appointment – Cancel an existing reservation
+5. save_customer_language – Save the customer’s language and name
 
 RESERVATION PROCESS:
-1. Greet (if new customer, DON'T say any name)
-2. Ask for how many people (maximum 4)
-3. Ask which day
-4. Ask which time slot and specific time
-5. Ask for name (only if you don't have it and before creating reservation)
-6. Confirm all details before creating
 
-BE warm, professional and friendly."""
-    }
+1. Greet the customer initially without asking what they want. Only respond if they provide additional information.
+2. Detect the customer’s intention: reservation, modification, cancellation, or inquiry.
+3. If the customer wants to make a reservation:
+
+   * Ask for the date, time, and number of people.
+   * If you already know the customer’s name, confirm the details and call create_appointment.
+   * If you don’t know the name, ask for it. Save only valid names and then confirm the details with create_appointment.
+4. If the customer wants to modify a reservation: ask for the new date, time, and number of people, confirm the details, and call update_appointment.
+5. If the customer wants to cancel a reservation: show the reservations with list_appointments, ask which one they want to cancel, and call cancel_appointment.
+6. If the customer asks for details about their reservation (time, date, people), show their active reservations with list_appointments.
+7. If the customer asks to change the language, update it using save_customer_language.
+
+Be warm, professional, and friendly."""
+}
     
     system_prompt = system_prompts.get(language, system_prompts['es'])
     
@@ -259,14 +293,14 @@ BE warm, professional and friendly."""
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=messages,
             tools=[
                 {
                     "type": "function",
                     "function": {
                         "name": "create_appointment",
-                        "description": "Crear una reserva nova quan tinguis TOTS els datos necessaris",
+                        "description": "Crear una reserva nova quan tinguis TOTES les dades necessaris",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -353,13 +387,20 @@ BE warm, professional and friendly."""
                 
                 if result:
                     table_info = result['table']
-                    confirmations = {
-                        'es': f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!",
-                        'ca': f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!",
-                        'en': f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!"
-                    }
-                    assistant_reply = confirmations.get(language, confirmations['es'])
-                    conversation_manager.clear_history(phone)
+                    
+                    # Missatges segons idioma amb pregunta per notes
+                    if language == 'ca':
+                        confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)"
+                    elif language == 'en':
+                        confirmation = f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!\n\n📝 Any special requests? (high chair, allergies, preferences...)"
+                    else:
+                        confirmation = f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!\n\n📝 ¿Alguna observación especial? (trona, alergias, preferencias...)"
+                    
+                    assistant_reply = confirmation
+                    
+                    # Guardar ID de la reserva creada per afegir notes després
+                    conversation_manager.save_message(phone, "system", f"LAST_APPOINTMENT_ID:{result['id']}")
+                    # No netejar historial perè poden afegir notes
                 else:
                     no_tables_msgs = {
                         'es': f"Lo siento, no hay mesas disponibles para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¿Prefieres otro horario?",
@@ -443,6 +484,39 @@ BE warm, professional and friendly."""
             assistant_reply = message_response.content
         
         print(f"📝 DEBUG: Guardando en historial...")
+        
+        # STEP 7: Detectar si l'usuari està responent amb notes després de confirmar reserva
+        if history:
+            for msg in reversed(history):
+                if msg['role'] == 'system' and msg['content'].startswith('LAST_APPOINTMENT_ID:'):
+                    # L'usuari ha confirmat una reserva recentment i ara respon
+                    appointment_id = int(msg['content'].split(':')[1])
+                    
+                    # Si el missatge sembla una resposta negativa, netejar historial
+                    negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
+                    if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
+                        conversation_manager.clear_history(phone)
+                        thanks_msgs = {
+                            'ca': '✅ Perfecte! Ens veiem aviat!',
+                            'es': '✅ ¡Perfecto! ¡Nos vemos pronto!',
+                            'en': '✅ Perfect! See you soon!'
+                        }
+                        return thanks_msgs.get(language, thanks_msgs['es'])
+                    
+                    # Afegir les notes a la reserva
+                    success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
+                    
+                    if success:
+                        conversation_manager.clear_history(phone)
+                        success_msgs = {
+                            'ca': f'✅ Notes afegides: "{message}"\n\nGràcies! Ens veiem aviat!',
+                            'es': f'✅ Observación añadida: "{message}"\n\n¡Gracias! ¡Nos vemos pronto!',
+                            'en': f'✅ Note added: "{message}"\n\nThank you! See you soon!'
+                        }
+                        return success_msgs.get(language, success_msgs['es'])
+                    
+                    break
+        
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
         print(f"📝 DEBUG: Historial guardado correctamente")

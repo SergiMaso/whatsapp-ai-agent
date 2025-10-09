@@ -72,8 +72,9 @@ class AppointmentManager:
             print(f"❌ Error buscando mesa: {e}")
             return None
     
-    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1):
+    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
+            # Convertir date i time a TIMESTAMP
             start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
@@ -88,12 +89,28 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO appointments 
-                (phone, client_name, date, start_time, end_time, num_people, table_id, language, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, 'confirmed'))
+                (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, start_time, end_time
+            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed'))
             
-            appointment_id = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            appointment_id = result[0]
+            saved_start = result[1]
+            saved_end = result[2]
+            
+            # Incrementar visit_count del client
+            cursor.execute("""
+                UPDATE customers 
+                SET visit_count = visit_count + 1, last_visit = CURRENT_TIMESTAMP
+                WHERE phone = %s
+            """, (phone,))
+            
+            # Debug: Verificar què s'ha guardat
+            print(f"✅ Reserva creada: ID={appointment_id}")
+            print(f"   Input: {start_time} -> Guardat: {saved_start}")
+            print(f"   Timezone: {saved_start.tzinfo if hasattr(saved_start, 'tzinfo') else 'No timezone'}")
+            
             conn.commit()
             cursor.close()
             conn.close()
@@ -233,12 +250,40 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s AND phone = %s", (appointment_id, phone))
+            
+            # Decrementar visit_count del client
+            cursor.execute("""
+                UPDATE customers 
+                SET visit_count = GREATEST(visit_count - 1, 0)
+                WHERE phone = %s
+            """, (phone,))
+            
             conn.commit()
             cursor.close()
             conn.close()
             return True
         except Exception as e:
             print(f"❌ Error cancelando reserva: {e}")
+            return False
+    
+    def add_notes_to_appointment(self, phone, appointment_id, notes):
+        """Afegir notes a una reserva existent"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE appointments 
+                SET notes = %s 
+                WHERE id = %s AND phone = %s AND status = 'confirmed'
+            """, (notes, appointment_id, phone))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return affected > 0
+        except Exception as e:
+            print(f"❌ Error afegint notes: {e}")
             return False
     
     def save_customer_info(self, phone, name, language=None):
@@ -366,8 +411,41 @@ class ConversationManager:
             print(f"❌ Error actualitzant l'idioma: {e}")
             return 0
     
-    def save_message(self, phone, role, content):
+    def clean_old_messages(self):
+        """
+        Eliminar missatges de més de 10 minuts de TOTS els usuaris
+        S'executa automàticament abans de guardar nous missatges
+        """
         try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Eliminar missatges creats fa més de 10 minuts
+            cursor.execute("""
+                DELETE FROM conversations 
+                WHERE created_at < NOW() - INTERVAL '10 minutes'
+            """)
+            
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"🧹 Netejats {deleted_count} missatges antics (>10 min)")
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"❌ Error limpiando mensajes antiguos: {e}")
+    
+    def save_message(self, phone, role, content):
+        """
+        Guardar un missatge a l'historial
+        
+        Abans de guardar, neteja missatges antics automàticament
+        """
+        try:
+            # IMPORTANT: Netejar missatges antics abans de guardar
+            self.clean_old_messages()
+            
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("INSERT INTO conversations (phone, role, content) VALUES (%s, %s, %s)", (phone, role, content))
@@ -378,10 +456,23 @@ class ConversationManager:
             print(f"❌ Error guardando mensaje: {e}")
     
     def get_history(self, phone, limit=10):
+        """
+        Obtenir historial de conversa NOMÉS dels últims 10 minuts
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT role, content FROM conversations WHERE phone = %s ORDER BY created_at DESC LIMIT %s", (phone, limit))
+            
+            # Només obtenir missatges dels últims 10 minuts
+            cursor.execute("""
+                SELECT role, content 
+                FROM conversations 
+                WHERE phone = %s 
+                  AND created_at > NOW() - INTERVAL '10 minutes'
+                ORDER BY created_at DESC 
+                LIMIT %s
+            """, (phone, limit))
+            
             messages = cursor.fetchall()
             cursor.close()
             conn.close()
@@ -402,18 +493,25 @@ class ConversationManager:
             print(f"❌ Error limpiando historial: {e}")
     
     def get_message_count(self, phone):
-        
+        """
+        Comptar missatges dels últims 10 minuts
+        """
         try:
-            self.cursor.execute("""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Comptar només missatges dels últims 10 minuts
+            cursor.execute("""
                 SELECT COUNT(*) 
-                FROM ndxai.messages m
-                INNER JOIN ndxai.conversations c ON m.conversation_id = c.conversation_id
-                WHERE c.phone = %s 
-                    AND m.role = 'user'
+                FROM conversations 
+                WHERE phone = %s 
+                  AND role = 'user'
+                  AND created_at > NOW() - INTERVAL '10 minutes'
             """, (phone,))
-            count = self.cursor.fetchone()[0]
-            self.cursor.close()
-            self.conn.close()
+            
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
             return count
         except Exception as e:
             print(f"❌ Error contando mensajes: {e}")

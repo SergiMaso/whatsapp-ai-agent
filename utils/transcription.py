@@ -33,12 +33,12 @@ def transcribe_audio(audio_url, auth_header):
         # Inicializar cliente OpenAI
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
-        # Transcribir con Whisper
+        # Transcribir con Whisper (auto-detecta idioma)
         with open(audio_path, 'rb') as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
-                file=audio_file,
-                language="es"  # Catalá por defecto, Whisper detectará si es otro idioma
+                file=audio_file
+                # Sin language: Whisper detecta automáticamente el idioma
             )
         
         print(f"[OK] Transcripcion exitosa: {transcript.text}")
