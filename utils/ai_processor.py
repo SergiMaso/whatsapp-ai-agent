@@ -67,10 +67,14 @@ def detect_language(text):
     except LangDetectException:
         return 'es'
 
-def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
+def process_message_with_ai(message, phone):
     """
     Processa el missatge de l'usuari amb GPT per gestionar reserves.
     """
+
+    from utils.appointments import AppointmentManager, ConversationManager
+    appointment_manager = AppointmentManager()
+    conversation_manager = ConversationManager()
 
     # IMPORTANT: Netejar el prefix "whatsapp:" del telèfon
     if phone.startswith('whatsapp:'):
@@ -84,17 +88,18 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
 
     if saved_language:
         language = saved_language
+        conversation_manager.create_conversation(language, phone)
         print(f"🌍 Client conegut - Idioma mantingut: {language}")
     else:
         if message_count == 0:
             language = detect_language(message)
-            appointment_manager.save_customer_language(phone, language)
+            conversation_manager.create_conversation(language, phone)
             print(f"👋 Primer missatge → Idioma detectat i guardat: {language}")
         elif message_count == 1:
             new_language = detect_language(message)
             old_language = appointment_manager.get_customer_language(phone)
             if new_language != old_language:
-                appointment_manager.save_customer_language(phone, new_language)
+                conversation_manager.update_conversation_language(phone, new_language, phone)
                 language = new_language
                 print(f"🔄 Segon missatge → idioma actualitzat: {old_language} → {new_language}")
             else:

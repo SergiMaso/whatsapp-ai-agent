@@ -17,94 +17,9 @@ class AppointmentManager:
     
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
-        self.ensure_tables_exist()
-    
-    def get_connection(self):
-        """Crear connexió a PostgreSQL"""
-        return psycopg2.connect(self.database_url)
-    
-    def ensure_tables_exist(self):
-        """
-        Crear totes les taules necessàries si no existeixen
-        
-        Taules:
-        - tables: informació de les taules del restaurant
-        - appointments: reserves dels clients
-        - customers: informació dels clients (nom, idioma)
-        - conversations: historial de converses
-        """
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS tables (
-                    id SERIAL PRIMARY KEY,
-                    table_number INTEGER UNIQUE NOT NULL,
-                    capacity INTEGER NOT NULL,
-                    status VARCHAR(20) DEFAULT 'available'
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS appointments (
-                    id SERIAL PRIMARY KEY,
-                    phone VARCHAR(50) NOT NULL,
-                    client_name VARCHAR(100),
-                    date DATE NOT NULL,
-                    start_time TIMESTAMP NOT NULL,
-                    end_time TIMESTAMP NOT NULL,
-                    num_people INTEGER NOT NULL,
-                    table_id INTEGER REFERENCES tables(id),
-                    language VARCHAR(10),
-                    status VARCHAR(20) DEFAULT 'confirmed',
-                    reminder_sent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS customers (
-                    id SERIAL PRIMARY KEY,
-                    phone VARCHAR(50) UNIQUE NOT NULL,
-                    name VARCHAR(100) NOT NULL,
-                    language VARCHAR(10) DEFAULT 'es',
-                    last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                SELECT column_name FROM information_schema.columns 
-                WHERE table_name='customers' AND column_name='language'
-            """)
-            if not cursor.fetchone():
-                cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10) DEFAULT 'es'")
-                conn.commit()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id SERIAL PRIMARY KEY,
-                    phone VARCHAR(50) NOT NULL,
-                    role VARCHAR(20) NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("SELECT COUNT(*) FROM tables")
-            if cursor.fetchone()[0] == 0:
-                for i in range(1, 21):
-                    cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 4)", (i,))
-                for i in range(21, 29):
-                    cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 2)", (i,))
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print("✅ Base de datos lista")
-        
-        except Exception as e:
-            print(f"❌ Error creando tablas: {e}")
+        self.conn = psycopg2.connect(self.database_url)
+        self.cursor = self.conn.cursor()
+        self.restaurant_id = 1 # Hardcoded: de moment només tenim un restaurant
     
     def find_available_table(self, start_time, end_time, num_people, exclude_appointment_id=None):
         try:
@@ -275,31 +190,42 @@ class AppointmentManager:
     
     def get_latest_appointment(self, phone):
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT id, date, start_time, num_people
-                FROM appointments
-                WHERE phone = %s AND status = 'confirmed'
-                ORDER BY created_at DESC LIMIT 1
+            self.cursor.execute("""
+                SELECT 
+                      b.booking_id
+                    , c.date
+                    , h.hour
+                    , t.restaurant_table_id
+                    , b.n_customers
+                    , b.update_at
+                FROM ndxai.bookings b
+                INNER JOIN ndxai.calendar c ON c.calendar_id = b.calendar_id
+                INNER JOIN ndxai.hours h ON h.hour_id = b.hour_id
+                INNER JOIN ndxai.tables t ON t.table_id = b.table_id
+                INNER JOIN ndxai.customers cu ON cu.customer_id = b.customer_id
+                WHERE cu.phone = %s
+                    AND b.book IS TRUE
+                    AND concat(c.date, ' ', h.hour)::timestamptz > now()
+                ORDER BY c.date, h.hour 
+                LIMIT 1
             """, (phone,))
             
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
+            result = self.cursor.fetchone()
+            self.cursor.close()
+            self.conn.close()
             
             if result:
                 return {
                     'id': result[0], 
                     'date': result[1], 
                     'time': result[2].strftime("%H:%M"),
-                    'num_people': result[3]
+                    'table': result[3],
+                    'num_people': result[4]
                 }
             return None
         
         except Exception as e:
-            print(f"❌ Error obteniendo última reserva: {e}")
+            print(f"❌ Error obtenint l'última reserva: {e}")
             return None
     
     def cancel_appointment(self, phone, appointment_id):
@@ -344,69 +270,101 @@ class AppointmentManager:
     def get_customer_name(self, phone):
         """
         Obtenir el nom d'un client si existeix
-        
-        Retorna None si el nom és TEMP (client temporal sense nom real)
         """
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM customers WHERE phone = %s", (phone,))
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            # Retornar None si és TEMP (nom temporal)
-            if result and result[0] != 'TEMP':
+            self.cursor.execute("""
+                SELECT name 
+                FROM ndxai.customers 
+                WHERE phone = %s
+            """, (phone,))
+            result = self.cursor.fetchone()
+            self.cursor.close()
+            self.conn.close()
+
+            if result:
                 return result[0]
             return None
         except Exception as e:
-            print(f"❌ Error obteniendo nombre: {e}")
+            print(f"❌ Error obtenint el nom: {e}")
             return None
     
     def get_customer_language(self, phone):
+        
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT language FROM customers WHERE phone = %s", (phone,))
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
+            self.cursor.execute("""
+                SELECT language 
+                FROM ndxai.customers c
+                INNER JOIN ndxai.languages l ON c.language_id = l.language_id
+                WHERE c.phone = %s
+            """, (phone,))
+            result = self.cursor.fetchone()
+            self.cursor.close()
+            self.conn.close()
             return result[0] if result else None
+        
         except Exception as e:
             print(f"❌ Error obteniendo idioma: {e}")
             return None
     
-    def save_customer_language(self, phone, language):
-        """
-        Guardar l'idioma preferit d'un client
+    # def save_customer_language(self, phone, language):
+    #     """
+    #     Guardar l'idioma preferit d'un client
         
-        Si el client no existeix, crea registre temporal amb nom 'TEMP'
-        Quan faci la reserva, s'actualitzarà amb el nom real
-        """
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+    #     Si el client no existeix, crea registre temporal amb nom 'TEMP'
+    #     Quan faci la reserva, s'actualitzarà amb el nom real
+    #     """
+    #     try:
+    #         conn = self.get_connection()
+    #         cursor = conn.cursor()
             
-            cursor.execute("""
-                INSERT INTO customers (phone, name, language, last_visit)
-                VALUES (%s, 'TEMP', %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (phone) 
-                DO UPDATE SET language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP
-            """, (phone, language))
+    #         cursor.execute("""
+    #             INSERT INTO customers (phone, name, language, last_visit)
+    #             VALUES (%s, 'TEMP', %s, CURRENT_TIMESTAMP)
+    #             ON CONFLICT (phone) 
+    #             DO UPDATE SET language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP
+    #         """, (phone, language))
             
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print(f"🌍 Idioma guardado: {phone} → {language}")
-        except Exception as e:
-            print(f"❌ Error guardando idioma: {e}")
+    #         conn.commit()
+    #         cursor.close()
+    #         conn.close()
+    #         print(f"🌍 Idioma guardado: {phone} → {language}")
+    #     except Exception as e:
+    #         print(f"❌ Error guardando idioma: {e}")
 
 
 class ConversationManager:
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
+        self.conn = psycopg2.connect(self.database_url)
+        self.cursor = self.conn.cursor()
+        self.restaurant_id = 1 # Hardcoded: de moment només tenim un restaurant
     
-    def get_connection(self):
-        return psycopg2.connect(self.database_url)
+    def create_conversation(self, language, phone):
+        try:
+            self.cursor.execute("""
+                INSERT INTO ndxai.conversations(language_id, restaurant_id, phone) VALUES
+                (%s, %s, %s)
+            """, (language, self.restaurant_id, phone))
+            count = self.cursor.fetchone()[0]
+            self.cursor.close()
+            self.conn.close()
+        except Exception as e:
+            print(f"❌ Error creant la conversa: {e}")
+            return 0
+        
+    def update_conversation_language(self, language, phone):
+        try:
+            self.cursor.execute("""
+                UPDATE ndxai.conversations
+                SET language_id = %s
+                WHERE phone = %s
+            """, (language, phone))
+            count = self.cursor.fetchone()[0]
+            self.cursor.close()
+            self.conn.close()
+        except Exception as e:
+            print(f"❌ Error actualitzant l'idioma: {e}")
+            return 0
     
     def save_message(self, phone, role, content):
         try:
@@ -444,13 +402,18 @@ class ConversationManager:
             print(f"❌ Error limpiando historial: {e}")
     
     def get_message_count(self, phone):
+        
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM conversations WHERE phone = %s AND role = 'user'", (phone,))
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
+            self.cursor.execute("""
+                SELECT COUNT(*) 
+                FROM ndxai.messages m
+                INNER JOIN ndxai.conversations c ON m.conversation_id = c.conversation_id
+                WHERE c.phone = %s 
+                    AND m.role = 'user'
+            """, (phone,))
+            count = self.cursor.fetchone()[0]
+            self.cursor.close()
+            self.conn.close()
             return count
         except Exception as e:
             print(f"❌ Error contando mensajes: {e}")

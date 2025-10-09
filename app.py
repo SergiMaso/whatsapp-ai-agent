@@ -4,7 +4,6 @@ from twilio.rest import Client
 import os
 from dotenv import load_dotenv
 from utils.transcription import transcribe_audio
-from utils.appointments import AppointmentManager, ConversationManager
 from utils.ai_processor import process_message_with_ai
 import base64
 
@@ -21,10 +20,6 @@ if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
 else:
     twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
     print("✅ Cliente Twilio inicializado correctamente")
-
-# Inicializar gestores
-appointment_manager = AppointmentManager()
-conversation_manager = ConversationManager()
 
 @app.route('/')
 def home():
@@ -70,9 +65,7 @@ def whatsapp_webhook():
         # Procesar con IA
         ai_response = process_message_with_ai(
             incoming_msg, 
-            from_number, 
-            appointment_manager, 
-            conversation_manager
+            from_number
         )
         
         resp.message(ai_response)
