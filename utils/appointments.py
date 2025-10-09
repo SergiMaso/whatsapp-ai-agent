@@ -57,11 +57,22 @@ class AppointmentManager:
                     num_people INTEGER NOT NULL,
                     table_id INTEGER REFERENCES tables(id),
                     language VARCHAR(10),
+                    notes TEXT,
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Afegir columna notes si no existeix
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='appointments' AND column_name='notes'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE appointments ADD COLUMN notes TEXT")
+                print("✅ Columna notes afegida a appointments")
+                conn.commit()
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS customers (
@@ -69,9 +80,20 @@ class AppointmentManager:
                     phone VARCHAR(50) UNIQUE NOT NULL,
                     name VARCHAR(100) NOT NULL,
                     language VARCHAR(10) DEFAULT 'es',
+                    visit_count INTEGER DEFAULT 0,
                     last_visit TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Afegir columna visit_count si no existeix
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='customers' AND column_name='visit_count'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE customers ADD COLUMN visit_count INTEGER DEFAULT 0")
+                print("✅ Columna visit_count afegida a customers")
+                conn.commit()
             
             cursor.execute("""
                 SELECT column_name FROM information_schema.columns 
@@ -157,7 +179,7 @@ class AppointmentManager:
             print(f"❌ Error buscando mesa: {e}")
             return None
     
-    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1):
+    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
             # Convertir date i time a TIMESTAMP
             start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
@@ -174,15 +196,22 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO appointments 
-                (phone, client_name, date, start_time, end_time, num_people, table_id, language, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, start_time, end_time
-            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, 'confirmed'))
+            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed'))
             
             result = cursor.fetchone()
             appointment_id = result[0]
             saved_start = result[1]
             saved_end = result[2]
+            
+            # Incrementar visit_count del client
+            cursor.execute("""
+                UPDATE customers 
+                SET visit_count = visit_count + 1, last_visit = CURRENT_TIMESTAMP
+                WHERE phone = %s
+            """, (phone,))
             
             # Debug: Verificar què s'ha guardat
             print(f"✅ Reserva creada: ID={appointment_id}")
@@ -317,12 +346,40 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s AND phone = %s", (appointment_id, phone))
+            
+            # Decrementar visit_count del client
+            cursor.execute("""
+                UPDATE customers 
+                SET visit_count = GREATEST(visit_count - 1, 0)
+                WHERE phone = %s
+            """, (phone,))
+            
             conn.commit()
             cursor.close()
             conn.close()
             return True
         except Exception as e:
             print(f"❌ Error cancelando reserva: {e}")
+            return False
+    
+    def add_notes_to_appointment(self, phone, appointment_id, notes):
+        """Afegir notes a una reserva existent"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE appointments 
+                SET notes = %s 
+                WHERE id = %s AND phone = %s AND status = 'confirmed'
+            """, (notes, appointment_id, phone))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return affected > 0
+        except Exception as e:
+            print(f"❌ Error afegint notes: {e}")
             return False
     
     def save_customer_info(self, phone, name, language=None):

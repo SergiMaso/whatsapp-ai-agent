@@ -387,13 +387,20 @@ Be warm, professional, and friendly."""
                 
                 if result:
                     table_info = result['table']
-                    confirmations = {
-                        'es': f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!",
-                        'ca': f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!",
-                        'en': f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!"
-                    }
-                    assistant_reply = confirmations.get(language, confirmations['es'])
-                    conversation_manager.clear_history(phone)
+                    
+                    # Missatges segons idioma amb pregunta per notes
+                    if language == 'ca':
+                        confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)"
+                    elif language == 'en':
+                        confirmation = f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!\n\n📝 Any special requests? (high chair, allergies, preferences...)"
+                    else:
+                        confirmation = f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!\n\n📝 ¿Alguna observación especial? (trona, alergias, preferencias...)"
+                    
+                    assistant_reply = confirmation
+                    
+                    # Guardar ID de la reserva creada per afegir notes després
+                    conversation_manager.save_message(phone, "system", f"LAST_APPOINTMENT_ID:{result['id']}")
+                    # No netejar historial perè poden afegir notes
                 else:
                     no_tables_msgs = {
                         'es': f"Lo siento, no hay mesas disponibles para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¿Prefieres otro horario?",
@@ -477,6 +484,39 @@ Be warm, professional, and friendly."""
             assistant_reply = message_response.content
         
         print(f"📝 DEBUG: Guardando en historial...")
+        
+        # STEP 7: Detectar si l'usuari està responent amb notes després de confirmar reserva
+        if history:
+            for msg in reversed(history):
+                if msg['role'] == 'system' and msg['content'].startswith('LAST_APPOINTMENT_ID:'):
+                    # L'usuari ha confirmat una reserva recentment i ara respon
+                    appointment_id = int(msg['content'].split(':')[1])
+                    
+                    # Si el missatge sembla una resposta negativa, netejar historial
+                    negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
+                    if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
+                        conversation_manager.clear_history(phone)
+                        thanks_msgs = {
+                            'ca': '✅ Perfecte! Ens veiem aviat!',
+                            'es': '✅ ¡Perfecto! ¡Nos vemos pronto!',
+                            'en': '✅ Perfect! See you soon!'
+                        }
+                        return thanks_msgs.get(language, thanks_msgs['es'])
+                    
+                    # Afegir les notes a la reserva
+                    success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
+                    
+                    if success:
+                        conversation_manager.clear_history(phone)
+                        success_msgs = {
+                            'ca': f'✅ Notes afegides: "{message}"\n\nGràcies! Ens veiem aviat!',
+                            'es': f'✅ Observación añadida: "{message}"\n\n¡Gracias! ¡Nos vemos pronto!',
+                            'en': f'✅ Note added: "{message}"\n\nThank you! See you soon!'
+                        }
+                        return success_msgs.get(language, success_msgs['es'])
+                    
+                    break
+        
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
         print(f"📝 DEBUG: Historial guardado correctamente")

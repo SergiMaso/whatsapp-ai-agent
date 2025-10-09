@@ -104,10 +104,10 @@ def get_appointments():
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
-        # Obtenir reserves amb informació de taula
+        # Obtenir reserves amb informació de taula i notes
         cursor.execute("""
             SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time, 
-                   a.num_people, a.status, t.table_number, t.capacity, a.created_at
+                   a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes
             FROM appointments a
             LEFT JOIN tables t ON a.table_id = t.id
             ORDER BY a.start_time DESC
@@ -126,7 +126,8 @@ def get_appointments():
                 'status': row[7],
                 'table_number': row[8],
                 'table_capacity': row[9],
-                'created_at': row[10].isoformat() if row[10] else None
+                'created_at': row[10].isoformat() if row[10] else None,
+                'notes': row[11]
             })
         
         cursor.close()
@@ -284,6 +285,38 @@ def delete_appointment_api(appointment_id):
         print(f"❌ Error cancel·lant reserva: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/appointments/<int:appointment_id>/notes', methods=['PUT'])
+def add_notes_to_appointment_api(appointment_id):
+    """Afegir notes a una reserva"""
+    try:
+        data = request.json
+        notes = data.get('notes', '')
+        
+        # Obtenir phone de la reserva
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not row:
+            return jsonify({'error': 'Reserva no trobada'}), 404
+        
+        phone = row[0]
+        
+        # Afegir notes
+        success = appointment_manager.add_notes_to_appointment(phone, appointment_id, notes)
+        
+        if success:
+            return jsonify({'message': 'Notes afegides correctament'}), 200
+        else:
+            return jsonify({'error': 'Error afegint notes'}), 500
+    
+    except Exception as e:
+        print(f"❌ Error afegint notes: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/tables', methods=['GET'])
 def get_tables():
     """Obtenir totes les taules"""
@@ -313,6 +346,39 @@ def get_tables():
     
     except Exception as e:
         print(f"❌ Error obtenint taules: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/customers', methods=['GET'])
+def get_customers():
+    """Obtenir tots els clients"""
+    try:
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT phone, name, language, visit_count, last_visit
+            FROM customers
+            WHERE name != 'TEMP'
+            ORDER BY visit_count DESC, last_visit DESC
+        """)
+        
+        customers = []
+        for row in cursor.fetchall():
+            customers.append({
+                'phone': row[0],
+                'name': row[1],
+                'language': row[2],
+                'visit_count': row[3],
+                'last_visit': row[4].isoformat() if row[4] else None
+            })
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify(customers), 200
+    
+    except Exception as e:
+        print(f"❌ Error obtenint clients: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
