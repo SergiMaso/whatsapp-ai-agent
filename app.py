@@ -107,7 +107,7 @@ def get_appointments():
         # Obtenir reserves amb informació de taula i notes
         cursor.execute("""
             SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time, 
-                   a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes
+                   a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes, a.table_id
             FROM appointments a
             LEFT JOIN tables t ON a.table_id = t.id
             ORDER BY a.start_time DESC
@@ -127,7 +127,8 @@ def get_appointments():
                 'table_number': row[8],
                 'table_capacity': row[9],
                 'created_at': row[10].isoformat() if row[10] else None,
-                'notes': row[11]
+                'notes': row[11],
+                'table_id': row[12]
             })
         
         cursor.close()
@@ -234,13 +235,14 @@ def update_appointment_api(appointment_id):
         
         phone = row[0]
         
-        # Actualitzar
+        # Actualitzar (ara incloent table_id)
         result = appointment_manager.update_appointment(
             phone=phone,
             appointment_id=appointment_id,
             new_date=data.get('date'),
             new_time=data.get('time'),
-            new_num_people=data.get('num_people')
+            new_num_people=data.get('num_people'),
+            new_table_id=data.get('table_id')
         )
         
         if not result:

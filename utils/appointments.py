@@ -230,13 +230,13 @@ class AppointmentManager:
             traceback.print_exc()
             return None
     
-    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None):
+    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_table_id=None):
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT start_time, end_time, num_people FROM appointments
+                SELECT start_time, end_time, num_people, table_id FROM appointments
                 WHERE id = %s AND phone = %s AND status = 'confirmed'
             """, (appointment_id, phone))
             
@@ -246,7 +246,7 @@ class AppointmentManager:
                 conn.close()
                 return None
             
-            current_start, current_end, current_num_people = result
+            current_start, current_end, current_num_people, current_table_id = result
             
             if new_date or new_time:
                 date_part = new_date if new_date else current_start.strftime("%Y-%m-%d")
@@ -261,11 +261,47 @@ class AppointmentManager:
             
             final_num_people = new_num_people if new_num_people else current_num_people
             
-            table = self.find_available_table(new_start, new_end, final_num_people, exclude_appointment_id=appointment_id)
-            if not table:
-                cursor.close()
-                conn.close()
-                return None
+            # Si s'especifica una taula nova, validar que estigui disponible
+            if new_table_id is not None:
+                # Validar que la taula existeix i està disponible
+                cursor.execute("""
+                    SELECT id, table_number, capacity, status FROM tables
+                    WHERE id = %s
+                """, (new_table_id,))
+                table_row = cursor.fetchone()
+                
+                if not table_row:
+                    cursor.close()
+                    conn.close()
+                    return None
+                
+                if table_row[3] != 'available':
+                    cursor.close()
+                    conn.close()
+                    return None
+                
+                # Validar que no estigui reservada en aquell horari
+                cursor.execute("""
+                    SELECT id FROM appointments
+                    WHERE table_id = %s
+                      AND status = 'confirmed'
+                      AND id != %s
+                      AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
+                """, (new_table_id, appointment_id, new_end, new_start, new_start, new_end))
+                
+                if cursor.fetchone():
+                    cursor.close()
+                    conn.close()
+                    return None
+                
+                table = {'id': table_row[0], 'number': table_row[1], 'capacity': table_row[2]}
+            else:
+                # Buscar taula automàticament
+                table = self.find_available_table(new_start, new_end, final_num_people, exclude_appointment_id=appointment_id)
+                if not table:
+                    cursor.close()
+                    conn.close()
+                    return None
             
             cursor.execute("""
                 UPDATE appointments
