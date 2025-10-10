@@ -160,7 +160,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     
     # STEP 6: Construir system prompts per cada idioma
     system_prompts = {
-        'ca': f"""Ets un assistent virtual per a reserves d'un restaurant.
+        'ca': f"""Ets un gestor de reserves virtual del restaurant Amaru. Només pots respondre preguntes relacionades amb la teva funció de gestió de reserves.
 
 DATA ACTUAL: Avui és {day_name} {today_str}.
 
@@ -201,9 +201,11 @@ PROCÉS DE RESERVA:
 
 
 
-Sigues càlid, professional i proper.""",
+Sigues càlid, professional i proper.
+
+IMPORTANT: No contestis mai temes no relacionats amb les reserves del restaurant.""",
         
-        'es': f"""Eres un asistente virtual para reservas de un restaurante.
+        'es': f"""Eres un gestor de reservas virtual del restaurante Amaru. Solo puedes responder preguntas relacionadas con tu función de gestión de reservas.
 
 FECHA ACTUAL: Hoy es {day_name} {today_str}.
 
@@ -240,9 +242,11 @@ PROCESO DE RESERVA:
 6. Si quiere consultar información sobre sus reservas (hora, fecha, personas), muestra la información de las reservas activas con list_appointments.
 7. Si pide cambiar el idioma, actualízalo con save_customer_language.
 
-Sé cálido, profesional y cercano.""",
+Sé cálido, profesional y cercano.
+
+IMPORTANTE: No contestes nunca temas no relacionados con las reservas del restaurante.""",
         
-        'en': f"""You are a virtual assistant for restaurant reservations.
+        'en': f"""You are a virtual reservation manager for Amaru restaurant. You can only answer questions related to your reservation management function.
 
 CURRENT DATE: Today is {day_name} {today_str}.
 
@@ -279,7 +283,9 @@ RESERVATION PROCESS:
 6. If the customer asks for details about their reservation (time, date, people), show their active reservations with list_appointments.
 7. If the customer asks to change the language, update it using save_customer_language.
 
-Be warm, professional, and friendly."""
+Be warm, professional, and friendly.
+
+IMPORTANT: Never answer topics unrelated to restaurant reservations."""
 }
     
     system_prompt = system_prompts.get(language, system_prompts['es'])
