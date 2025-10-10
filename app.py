@@ -381,6 +381,41 @@ def get_customers():
         print(f"❌ Error obtenint clients: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/conversations/<phone>', methods=['GET'])
+def get_conversations(phone):
+    """Obtenir historial de conversa d'un client (sense missatges system)"""
+    try:
+        conn = conversation_manager.get_connection()
+        cursor = conn.cursor()
+        
+        # Netejar prefix whatsapp: o telegram: si existeix
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        cursor.execute("""
+            SELECT id, role, content, created_at
+            FROM conversations
+            WHERE phone = %s AND role != 'system'
+            ORDER BY created_at ASC
+        """, (clean_phone,))
+        
+        conversations = []
+        for row in cursor.fetchall():
+            conversations.append({
+                'id': row[0],
+                'role': row[1],
+                'content': row[2],
+                'created_at': row[3].isoformat() if row[3] else None
+            })
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify(conversations), 200
+    
+    except Exception as e:
+        print(f"❌ Error obtenint converses: {e}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
