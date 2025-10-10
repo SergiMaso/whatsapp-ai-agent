@@ -501,7 +501,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     # Si el missatge sembla una resposta negativa, netejar historial
                     negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
                     if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
-                        conversation_manager.clear_history(phone)
+                        # conversation_manager.clear_history(phone)  # SILENCIAT
                         thanks_msgs = {
                             'ca': '✅ Perfecte! Ens veiem aviat!',
                             'es': '✅ ¡Perfecto! ¡Nos vemos pronto!',
@@ -513,7 +513,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
                     
                     if success:
-                        conversation_manager.clear_history(phone)
+                        # conversation_manager.clear_history(phone)  # SILENCIAT
                         success_msgs = {
                             'ca': f'✅ Notes afegides: "{message}"\n\nGràcies! Ens veiem aviat!',
                             'es': f'✅ Observación añadida: "{message}"\n\n¡Gracias! ¡Nos vemos pronto!',
