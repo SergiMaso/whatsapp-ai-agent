@@ -678,6 +678,63 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error verificando si está abierto: {e}")
             return True, "Error - assumint obert"
+    
+    def set_recurring_opening_hours(self, day_of_week, status, start_date, end_date, lunch_start=None, lunch_end=None, dinner_start=None, dinner_end=None, notes=None, overwrite=False):
+        """
+        Establir horaris recurrents per un dia de la setmana
+        day_of_week: 0=dilluns, 1=dimarts, ..., 6=diumenge
+        overwrite: Si True, sobreescriu configuracions existents
+        """
+        try:
+            from datetime import datetime, timedelta
+            
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            
+            current_date = start
+            dates_updated = 0
+            dates_skipped = 0
+            
+            while current_date <= end:
+                # Comprovar si és el dia de la setmana correcte (0=dilluns)
+                if current_date.weekday() == day_of_week:
+                    # Si no sobreescrivim, comprovar si ja existeix configuració
+                    if not overwrite:
+                        existing = self.get_opening_hours(current_date.isoformat())
+                        # Si ja té configuració personalitzada (no és per defecte), saltar
+                        if existing and existing.get('notes'):
+                            dates_skipped += 1
+                            current_date += timedelta(days=1)
+                            continue
+                    
+                    # Establir horaris per aquest dia
+                    success = self.set_opening_hours(
+                        date=current_date.isoformat(),
+                        status=status,
+                        lunch_start=lunch_start,
+                        lunch_end=lunch_end,
+                        dinner_start=dinner_start,
+                        dinner_end=dinner_end,
+                        notes=notes
+                    )
+                    
+                    if success:
+                        dates_updated += 1
+                
+                current_date += timedelta(days=1)
+            
+            return {
+                'success': True,
+                'dates_updated': dates_updated,
+                'dates_skipped': dates_skipped
+            }
+        
+        except Exception as e:
+            print(f"❌ Error estableciendo horarios recurrentes: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
 
 class ConversationManager:

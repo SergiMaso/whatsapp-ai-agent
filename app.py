@@ -552,6 +552,61 @@ def update_opening_hours_api(date):
         print(f"❌ Error actualitzant horaris: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/opening-hours/recurring', methods=['POST'])
+def set_recurring_hours_api():
+    """
+    Configurar horaris recurrents per dia de la setmana
+    """
+    try:
+        data = request.json
+        
+        required = ['day_of_week', 'status', 'start_date', 'end_date']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'Camp obligatori: {field}'}), 400
+        
+        # Validar status
+        valid_statuses = ['closed', 'lunch_only', 'dinner_only', 'full_day']
+        if data['status'] not in valid_statuses:
+            return jsonify({'error': f'Status invàlid. Usa: {", ".join(valid_statuses)}'}), 400
+        
+        # Validar day_of_week (0=dilluns, 6=diumenge)
+        day_of_week = int(data['day_of_week'])
+        if day_of_week < 0 or day_of_week > 6:
+            return jsonify({'error': 'day_of_week ha de ser entre 0 (dilluns) i 6 (diumenge)'}), 400
+        
+        # Aplicar horaris recurrents
+        from datetime import datetime, timedelta
+        start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+        end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+        
+        current_date = start_date
+        count = 0
+        
+        while current_date <= end_date:
+            # weekday() retorna 0=dilluns, 6=diumenge
+            if current_date.weekday() == day_of_week:
+                appointment_manager.set_opening_hours(
+                    date=current_date.strftime('%Y-%m-%d'),
+                    status=data['status'],
+                    lunch_start=data.get('lunch_start'),
+                    lunch_end=data.get('lunch_end'),
+                    dinner_start=data.get('dinner_start'),
+                    dinner_end=data.get('dinner_end'),
+                    notes=data.get('notes')
+                )
+                count += 1
+            
+            current_date += timedelta(days=1)
+        
+        return jsonify({
+            'message': f'Horaris recurrents aplicats correctament a {count} dies'
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Error configurant horaris recurrents: {e}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
