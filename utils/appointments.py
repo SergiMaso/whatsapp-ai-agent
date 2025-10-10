@@ -60,7 +60,7 @@ class AppointmentManager:
                     notes TEXT,
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMPTZ DEFAULT (timezone('Europe/Madrid', CURRENT_TIMESTAMP))
+                    created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 )
             """)
             
@@ -81,7 +81,7 @@ class AppointmentManager:
                     name VARCHAR(100) NOT NULL,
                     language VARCHAR(10) DEFAULT 'es',
                     visit_count INTEGER DEFAULT 0,
-                    last_visit TIMESTAMPTZ DEFAULT (timezone('Europe/Madrid', CURRENT_TIMESTAMP))
+                    last_visit TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 )
             """)
             
@@ -109,7 +109,7 @@ class AppointmentManager:
                     phone VARCHAR(50) NOT NULL,
                     role VARCHAR(20) NOT NULL,
                     content TEXT NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT (timezone('Europe/Madrid', CURRENT_TIMESTAMP))
+                    created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 )
             """)
             
@@ -209,7 +209,7 @@ class AppointmentManager:
             # Incrementar visit_count del client
             cursor.execute("""
                 UPDATE customers 
-                SET visit_count = visit_count + 1, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
+                SET visit_count = visit_count + 1, last_visit = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 WHERE phone = %s
             """, (phone,))
             
@@ -390,16 +390,16 @@ class AppointmentManager:
             if language:
                 cursor.execute("""
                     INSERT INTO customers (phone, name, language, last_visit)
-                    VALUES (%s, %s, %s, timezone('Europe/Madrid', CURRENT_TIMESTAMP))
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                     ON CONFLICT (phone) 
-                    DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
+                    DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 """, (phone, name, language))
             else:
                 cursor.execute("""
                     INSERT INTO customers (phone, name, last_visit)
-                    VALUES (%s, %s, timezone('Europe/Madrid', CURRENT_TIMESTAMP))
+                    VALUES (%s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                     ON CONFLICT (phone) 
-                    DO UPDATE SET name = EXCLUDED.name, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
+                    DO UPDATE SET name = EXCLUDED.name, last_visit = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 """, (phone, name))
             
             conn.commit()
@@ -455,9 +455,9 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO customers (phone, name, language, last_visit)
-                VALUES (%s, 'TEMP', %s, timezone('Europe/Madrid', CURRENT_TIMESTAMP))
+                VALUES (%s, 'TEMP', %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 ON CONFLICT (phone) 
-                DO UPDATE SET language = EXCLUDED.language, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
+                DO UPDATE SET language = EXCLUDED.language, last_visit = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
             """, (phone, language))
             
             conn.commit()
@@ -477,22 +477,22 @@ class ConversationManager:
     
     def clean_old_messages(self):
         """
-        Eliminar missatges de més de 10 minuts de TOTS els usuaris
+        Eliminar missatges de més de 15 dies de TOTS els usuaris
         S'executa automàticament abans de guardar nous missatges
         """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Eliminar missatges creats fa més de 10 minuts
+            # Eliminar missatges creats fa més de 15 dies
             cursor.execute("""
                 DELETE FROM conversations 
-                WHERE created_at < NOW() - INTERVAL '10 minutes'
+                WHERE created_at < NOW() - INTERVAL '15 days'
             """)
             
             deleted_count = cursor.rowcount
             if deleted_count > 0:
-                print(f"🧹 Netejats {deleted_count} missatges antics (>10 min)")
+                print(f"🧹 Netejats {deleted_count} missatges antics (>15 dies)")
             
             conn.commit()
             cursor.close()
