@@ -113,6 +113,23 @@ class AppointmentManager:
                 )
             """)
             
+            # Crear taula opening_hours
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS opening_hours (
+                    id SERIAL PRIMARY KEY,
+                    date DATE UNIQUE NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    lunch_start TIME,
+                    lunch_end TIME,
+                    dinner_start TIME,
+                    dinner_end TIME,
+                    notes TEXT,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            print("✅ Taula opening_hours creada/verificada")
+            
             cursor.execute("SELECT COUNT(*) FROM tables")
             if cursor.fetchone()[0] == 0:
                 for i in range(1, 21):
@@ -502,6 +519,165 @@ class AppointmentManager:
             print(f"🌍 Idioma guardado: {phone} → {language}")
         except Exception as e:
             print(f"❌ Error guardando idioma: {e}")
+    
+    # ========================================
+    # MÈTODES PER OPENING_HOURS
+    # ========================================
+    
+    def get_opening_hours(self, date):
+        """
+        Obtenir els horaris d'obertura per una data específica
+        Retorna els horaris o els per defecte si no n'hi ha definits
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT status, lunch_start, lunch_end, dinner_start, dinner_end, notes
+                FROM opening_hours
+                WHERE date = %s
+            """, (date,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if result:
+                return {
+                    'status': result[0],
+                    'lunch_start': str(result[1]) if result[1] else None,
+                    'lunch_end': str(result[2]) if result[2] else None,
+                    'dinner_start': str(result[3]) if result[3] else None,
+                    'dinner_end': str(result[4]) if result[4] else None,
+                    'notes': result[5]
+                }
+            else:
+                # Horaris per defecte
+                return {
+                    'status': 'full_day',
+                    'lunch_start': '12:00',
+                    'lunch_end': '15:00',
+                    'dinner_start': '19:00',
+                    'dinner_end': '22:30',
+                    'notes': None
+                }
+        except Exception as e:
+            print(f"❌ Error obteniendo horarios: {e}")
+            # Retornar horaris per defecte en cas d'error
+            return {
+                'status': 'full_day',
+                'lunch_start': '12:00',
+                'lunch_end': '15:00',
+                'dinner_start': '19:00',
+                'dinner_end': '22:30',
+                'notes': None
+            }
+    
+    def set_opening_hours(self, date, status, lunch_start=None, lunch_end=None, dinner_start=None, dinner_end=None, notes=None):
+        """
+        Establir els horaris d'obertura per una data
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO opening_hours (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (date) 
+                DO UPDATE SET 
+                    status = EXCLUDED.status,
+                    lunch_start = EXCLUDED.lunch_start,
+                    lunch_end = EXCLUDED.lunch_end,
+                    dinner_start = EXCLUDED.dinner_start,
+                    dinner_end = EXCLUDED.dinner_end,
+                    notes = EXCLUDED.notes,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Error guardando horarios: {e}")
+            return False
+    
+    def get_opening_hours_range(self, start_date, end_date):
+        """
+        Obtenir horaris per un rang de dates
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes
+                FROM opening_hours
+                WHERE date >= %s AND date <= %s
+                ORDER BY date
+            """, (start_date, end_date))
+            
+            results = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            hours_list = []
+            for row in results:
+                hours_list.append({
+                    'date': row[0].isoformat() if row[0] else None,
+                    'status': row[1],
+                    'lunch_start': str(row[2]) if row[2] else None,
+                    'lunch_end': str(row[3]) if row[3] else None,
+                    'dinner_start': str(row[4]) if row[4] else None,
+                    'dinner_end': str(row[5]) if row[5] else None,
+                    'notes': row[6]
+                })
+            
+            return hours_list
+        except Exception as e:
+            print(f"❌ Error obteniendo rango de horarios: {e}")
+            return []
+    
+    def is_restaurant_open(self, date, time):
+        """
+        Verificar si el restaurant està obert en una data i hora específiques
+        """
+        try:
+            hours = self.get_opening_hours(date)
+            
+            if hours['status'] == 'closed':
+                return False, "Restaurant tancat"
+            
+            # Convertir time string a minuts des de mitjanit
+            time_parts = time.split(':')
+            time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+            
+            # Comprovar dinar
+            if hours['status'] in ['full_day', 'lunch_only'] and hours['lunch_start'] and hours['lunch_end']:
+                lunch_start_parts = hours['lunch_start'].split(':')
+                lunch_start_minutes = int(lunch_start_parts[0]) * 60 + int(lunch_start_parts[1])
+                lunch_end_parts = hours['lunch_end'].split(':')
+                lunch_end_minutes = int(lunch_end_parts[0]) * 60 + int(lunch_end_parts[1])
+                
+                if lunch_start_minutes <= time_minutes < lunch_end_minutes:
+                    return True, "Dinar"
+            
+            # Comprovar sopar
+            if hours['status'] in ['full_day', 'dinner_only'] and hours['dinner_start'] and hours['dinner_end']:
+                dinner_start_parts = hours['dinner_start'].split(':')
+                dinner_start_minutes = int(dinner_start_parts[0]) * 60 + int(dinner_start_parts[1])
+                dinner_end_parts = hours['dinner_end'].split(':')
+                dinner_end_minutes = int(dinner_end_parts[0]) * 60 + int(dinner_end_parts[1])
+                
+                if dinner_start_minutes <= time_minutes < dinner_end_minutes:
+                    return True, "Sopar"
+            
+            return False, "Fora d'horari"
+        except Exception as e:
+            print(f"❌ Error verificando si está abierto: {e}")
+            return True, "Error - assumint obert"
 
 
 class ConversationManager:

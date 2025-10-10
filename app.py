@@ -452,6 +452,106 @@ def get_conversations(phone):
         print(f"❌ Error obtenint converses: {e}")
         return jsonify({'error': str(e)}), 500
 
+# ========================================
+# OPENING HOURS ENDPOINTS
+# ========================================
+
+@app.route('/api/opening-hours', methods=['GET'])
+def get_opening_hours_api():
+    """
+    Obtenir horaris d'obertura
+    Query params: date (single), from+to (range)
+    """
+    try:
+        single_date = request.args.get('date')
+        from_date = request.args.get('from')
+        to_date = request.args.get('to')
+        
+        if single_date:
+            # Obtenir horaris d'un dia específic
+            hours = appointment_manager.get_opening_hours(single_date)
+            hours['date'] = single_date
+            return jsonify(hours), 200
+        elif from_date and to_date:
+            # Obtenir rang de dates
+            hours_list = appointment_manager.get_opening_hours_range(from_date, to_date)
+            return jsonify(hours_list), 200
+        else:
+            return jsonify({'error': 'Cal especificar date o from+to'}), 400
+    
+    except Exception as e:
+        print(f"❌ Error obtenint horaris: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/opening-hours', methods=['POST'])
+def set_opening_hours_api():
+    """
+    Crear/actualitzar horaris d'obertura per una data
+    """
+    try:
+        data = request.json
+        
+        required = ['date', 'status']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'Camp obligatori: {field}'}), 400
+        
+        # Validar status
+        valid_statuses = ['closed', 'lunch_only', 'dinner_only', 'full_day']
+        if data['status'] not in valid_statuses:
+            return jsonify({'error': f'Status invàlid. Usa: {", ".join(valid_statuses)}'}), 400
+        
+        success = appointment_manager.set_opening_hours(
+            date=data['date'],
+            status=data['status'],
+            lunch_start=data.get('lunch_start'),
+            lunch_end=data.get('lunch_end'),
+            dinner_start=data.get('dinner_start'),
+            dinner_end=data.get('dinner_end'),
+            notes=data.get('notes')
+        )
+        
+        if success:
+            return jsonify({'message': 'Horaris guardats correctament'}), 200
+        else:
+            return jsonify({'error': 'Error guardant horaris'}), 500
+    
+    except Exception as e:
+        print(f"❌ Error guardant horaris: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/opening-hours/<date>', methods=['PUT'])
+def update_opening_hours_api(date):
+    """
+    Actualitzar horaris d'una data específica
+    """
+    try:
+        data = request.json
+        
+        if 'status' in data:
+            valid_statuses = ['closed', 'lunch_only', 'dinner_only', 'full_day']
+            if data['status'] not in valid_statuses:
+                return jsonify({'error': f'Status invàlid. Usa: {", ".join(valid_statuses)}'}), 400
+        
+        success = appointment_manager.set_opening_hours(
+            date=date,
+            status=data.get('status', 'full_day'),
+            lunch_start=data.get('lunch_start'),
+            lunch_end=data.get('lunch_end'),
+            dinner_start=data.get('dinner_start'),
+            dinner_end=data.get('dinner_end'),
+            notes=data.get('notes')
+        )
+        
+        if success:
+            return jsonify({'message': 'Horaris actualitzats correctament'}), 200
+        else:
+            return jsonify({'error': 'Error actualitzant horaris'}), 500
+    
+    except Exception as e:
+        print(f"❌ Error actualitzant horaris: {e}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
