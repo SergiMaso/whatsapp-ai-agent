@@ -498,7 +498,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     # L'usuari ha confirmat una reserva recentment i ara respon
                     appointment_id = int(msg['content'].split(':')[1])
                     
-                    # Si el missatge sembla una resposta negativa, netejar historial
+                    # Si el missatge sembla una resposta negativa
                     negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
                     if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
                         # conversation_manager.clear_history(phone)  # SILENCIAT
@@ -507,7 +507,11 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                             'es': '✅ ¡Perfecto! ¡Nos vemos pronto!',
                             'en': '✅ Perfect! See you soon!'
                         }
-                        return thanks_msgs.get(language, thanks_msgs['es'])
+                        assistant_reply = thanks_msgs.get(language, thanks_msgs['es'])
+                        # Guardar missatges abans de retornar
+                        conversation_manager.save_message(phone, "user", message)
+                        conversation_manager.save_message(phone, "assistant", assistant_reply)
+                        return assistant_reply
                     
                     # Afegir les notes a la reserva
                     success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
@@ -519,7 +523,11 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                             'es': f'✅ Observación añadida: "{message}"\n\n¡Gracias! ¡Nos vemos pronto!',
                             'en': f'✅ Note added: "{message}"\n\nThank you! See you soon!'
                         }
-                        return success_msgs.get(language, success_msgs['es'])
+                        assistant_reply = success_msgs.get(language, success_msgs['es'])
+                        # Guardar missatges abans de retornar
+                        conversation_manager.save_message(phone, "user", message)
+                        conversation_manager.save_message(phone, "assistant", assistant_reply)
+                        return assistant_reply
                     
                     break
         
