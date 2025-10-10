@@ -151,20 +151,20 @@ class AppointmentManager:
             if num_people <= 2:
                 cursor.execute("""
                     SELECT id, table_number, capacity FROM tables 
-                    WHERE capacity = 2 AND id NOT IN %s ORDER BY table_number LIMIT 1
+                    WHERE capacity = 2 AND status = 'available' AND id NOT IN %s ORDER BY table_number LIMIT 1
                 """, (tuple(reserved_ids) if reserved_ids else (0,),))
                 result = cursor.fetchone()
                 
                 if not result:
                     cursor.execute("""
                         SELECT id, table_number, capacity FROM tables 
-                        WHERE capacity = 4 AND id NOT IN %s ORDER BY table_number LIMIT 1
+                        WHERE capacity = 4 AND status = 'available' AND id NOT IN %s ORDER BY table_number LIMIT 1
                     """, (tuple(reserved_ids) if reserved_ids else (0,),))
                     result = cursor.fetchone()
             else:
                 cursor.execute("""
                     SELECT id, table_number, capacity FROM tables 
-                    WHERE capacity >= %s AND id NOT IN %s ORDER BY capacity, table_number LIMIT 1
+                    WHERE capacity >= %s AND status = 'available' AND id NOT IN %s ORDER BY capacity, table_number LIMIT 1
                 """, (num_people, tuple(reserved_ids) if reserved_ids else (0,)))
                 result = cursor.fetchone()
             

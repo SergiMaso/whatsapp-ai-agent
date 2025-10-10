@@ -348,6 +348,40 @@ def get_tables():
         print(f"❌ Error obtenint taules: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/tables/<int:table_id>', methods=['PUT'])
+def update_table_status(table_id):
+    """Actualitzar status d'una taula"""
+    try:
+        data = request.json
+        status = data.get('status')
+        
+        if status not in ['available', 'unavailable']:
+            return jsonify({'error': 'Status invàlid. Usa: available, unavailable'}), 400
+        
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE tables
+            SET status = %s
+            WHERE id = %s
+        """, (status, table_id))
+        
+        if cursor.rowcount == 0:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Taula no trobada'}), 404
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'message': 'Status actualitzat correctament'}), 200
+    
+    except Exception as e:
+        print(f"❌ Error actualitzant status: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/customers', methods=['GET'])
 def get_customers():
     """Obtenir tots els clients"""
