@@ -221,11 +221,12 @@ class AppointmentManager:
                 INNER JOIN ndxai.tables t ON t.table_id = b.table_id
                 INNER JOIN ndxai.customers cu ON cu.customer_id = b.customer_id
                 WHERE cu.phone = %s
+                    AND b.restaurant_id = %s
                     AND b.book IS TRUE
                     AND concat(c.date, ' ', h.hour)::timestamptz > now()
                 ORDER BY c.date, h.hour 
                 LIMIT 1
-            """, (phone,))
+            """, (phone, self.restaurant_id))
             
             result = self.cursor.fetchone()
             self.cursor.close()
@@ -288,27 +289,25 @@ class AppointmentManager:
     
     def save_customer_info(self, phone, name, language=None):
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
             
             if language:
-                cursor.execute("""
+                self.cursor.execute("""
                     INSERT INTO customers (phone, name, language, last_visit)
                     VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (phone) 
                     DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP
                 """, (phone, name, language))
             else:
-                cursor.execute("""
+                self.cursor.execute("""
                     INSERT INTO customers (phone, name, last_visit)
                     VALUES (%s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (phone) 
                     DO UPDATE SET name = EXCLUDED.name, last_visit = CURRENT_TIMESTAMP
                 """, (phone, name))
             
-            conn.commit()
-            cursor.close()
-            conn.close()
+            self.conn.commit()
+            self.cursor.close()
+            self.conn.close()
         except Exception as e:
             print(f"❌ Error guardando cliente: {e}")
     
@@ -403,7 +402,8 @@ class ConversationManager:
                 UPDATE ndxai.conversations
                 SET language_id = %s
                 WHERE phone = %s
-            """, (language, phone))
+                    AND restaurant_id = %s
+            """, (language, phone, self.restaurant_id))
             count = self.cursor.fetchone()[0]
             self.cursor.close()
             self.conn.close()
@@ -455,27 +455,31 @@ class ConversationManager:
         except Exception as e:
             print(f"❌ Error guardando mensaje: {e}")
     
-    def get_history(self, phone, limit=10):
+    def get_history(self, phone):
         """
         Obtenir historial de conversa NOMÉS dels últims 10 minuts
         """
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            # Obtenir historial de missatges de la conversa actual
+            self.cursor.execute("""
+                SELECT m.role, m.message as content
+                FROM ndxai.messages m
+                INNER JOIN ndxai.conversations c 
+                    ON c.conversation_id = m.conversation_id
+                WHERE c.phone = %s
+                    AND c.restaurant_id = %s
+                    AND c.conversation_id = (
+                        SELECT conversation_id
+                        FROM ndxai.conversations
+                        WHERE phone = %s AND c.restaurant_id = %s
+                        ORDER BY insert_at DESC
+                        LIMIT 1
+                    )
+            """, (phone, self.restaurant_id, phone, self.restaurant_id))
             
-            # Només obtenir missatges dels últims 10 minuts
-            cursor.execute("""
-                SELECT role, content 
-                FROM conversations 
-                WHERE phone = %s 
-                  AND created_at > NOW() - INTERVAL '10 minutes'
-                ORDER BY created_at DESC 
-                LIMIT %s
-            """, (phone, limit))
-            
-            messages = cursor.fetchall()
-            cursor.close()
-            conn.close()
+            messages = self.cursor.fetchall()
+            self.cursor.close()
+            self.conn.close()
             return [{"role": role, "content": content} for role, content in reversed(messages)]
         except Exception as e:
             print(f"❌ Error obteniendo historial: {e}")

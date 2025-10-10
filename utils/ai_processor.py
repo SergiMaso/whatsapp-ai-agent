@@ -9,6 +9,7 @@ from unidecode import unidecode
 from utils.appointments import AppointmentManager, ConversationManager
 load_dotenv()
 
+
 def detect_language(text):
     """
     Detecta l'idioma del text comptant coincidències amb keywords
@@ -79,6 +80,10 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     """
     Processa el missatge de l'usuari amb GPT per gestionar reserves.
     """
+
+    # Inicializar gestores
+    appointment_manager = AppointmentManager()
+    conversation_manager = ConversationManager()
 
     # IMPORTANT: Netejar prefixos del telèfon
     if phone.startswith('whatsapp:'):
@@ -196,11 +201,6 @@ PROCÉS DE RESERVA:
 6. Si vol consultar informació sobre la seva reserva (hora, data, persones), mostra la informació de les reserves actives amb list_appointments.
 7. Si demana canviar l’idioma, actualitza’l amb save_customer_language.
 
-
-
-
-
-
 Sigues càlid, professional i proper.""",
         
         'es': f"""Eres un asistente virtual para reservas de un restaurante.
@@ -285,7 +285,7 @@ Be warm, professional, and friendly."""
     system_prompt = system_prompts.get(language, system_prompts['es'])
     
     try:
-        history = conversation_manager.get_history(phone, limit=10)
+        history = conversation_manager.get_history(phone)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": message})
