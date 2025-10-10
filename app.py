@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from utils.transcription import transcribe_audio
 from utils.appointments import AppointmentManager, ConversationManager
 from utils.ai_processor import process_message_with_ai
+from utils.weekly_defaults import WeeklyDefaultsManager
 import base64
 from datetime import datetime
 
@@ -28,6 +29,7 @@ else:
 # Inicializar gestores
 appointment_manager = AppointmentManager()
 conversation_manager = ConversationManager()
+weekly_defaults_manager = WeeklyDefaultsManager()
 
 @app.route('/')
 def home():
@@ -600,11 +602,60 @@ def set_recurring_hours_api():
             current_date += timedelta(days=1)
         
         return jsonify({
-            'message': f'Horaris recurrents aplicats correctament a {count} dies'
+            'message': f'Horaris recurrents aplicats correctament a {count} dies',
+            'days_updated': count
         }), 200
     
     except Exception as e:
         print(f"❌ Error configurant horaris recurrents: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/weekly-defaults', methods=['GET'])
+def get_weekly_defaults_api():
+    """
+    Obtenir configuració per defecte per cada dia de la setmana
+    """
+    try:
+        defaults = weekly_defaults_manager.get_all_defaults()
+        return jsonify(defaults), 200
+    except Exception as e:
+        print(f"❌ Error obtenint configuració setmanal: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/weekly-defaults/<int:day_of_week>', methods=['PUT'])
+def update_weekly_default_api(day_of_week):
+    """
+    Actualitzar configuració per defecte d'un dia de la setmana
+    I aplicar a tots els dies futurs d'aquest tipus que NO estiguin customitzats
+    """
+    try:
+        data = request.json
+        
+        if day_of_week < 0 or day_of_week > 6:
+            return jsonify({'error': 'day_of_week ha de ser entre 0 (dilluns) i 6 (diumenge)'}), 400
+        
+        # Validar status
+        valid_statuses = ['closed', 'lunch_only', 'dinner_only', 'full_day']
+        if data.get('status') and data['status'] not in valid_statuses:
+            return jsonify({'error': f'Status invàlid. Usa: {", ".join(valid_statuses)}'}), 400
+        
+        # Actualitzar defaults i aplicar
+        result = weekly_defaults_manager.update_default(
+            day_of_week=day_of_week,
+            status=data.get('status', 'full_day'),
+            lunch_start=data.get('lunch_start'),
+            lunch_end=data.get('lunch_end'),
+            dinner_start=data.get('dinner_start'),
+            dinner_end=data.get('dinner_end')
+        )
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 500
+    
+    except Exception as e:
+        print(f"❌ Error actualitzant configuració setmanal: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
