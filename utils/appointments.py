@@ -60,7 +60,7 @@ class AppointmentManager:
                     notes TEXT,
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMPTZ DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
+                    created_at TIMESTAMPTZ DEFAULT (timezone('Europe/Madrid', CURRENT_TIMESTAMP))
                 )
             """)
             
@@ -81,7 +81,7 @@ class AppointmentManager:
                     name VARCHAR(100) NOT NULL,
                     language VARCHAR(10) DEFAULT 'es',
                     visit_count INTEGER DEFAULT 0,
-                    last_visit TIMESTAMPTZ DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
+                    last_visit TIMESTAMPTZ DEFAULT (timezone('Europe/Madrid', CURRENT_TIMESTAMP))
                 )
             """)
             
@@ -109,7 +109,7 @@ class AppointmentManager:
                     phone VARCHAR(50) NOT NULL,
                     role VARCHAR(20) NOT NULL,
                     content TEXT NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
+                    created_at TIMESTAMPTZ DEFAULT (timezone('Europe/Madrid', CURRENT_TIMESTAMP))
                 )
             """)
             
@@ -209,7 +209,7 @@ class AppointmentManager:
             # Incrementar visit_count del client
             cursor.execute("""
                 UPDATE customers 
-                SET visit_count = visit_count + 1, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
+                SET visit_count = visit_count + 1, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
                 WHERE phone = %s
             """, (phone,))
             
@@ -390,16 +390,16 @@ class AppointmentManager:
             if language:
                 cursor.execute("""
                     INSERT INTO customers (phone, name, language, last_visit)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
+                    VALUES (%s, %s, %s, timezone('Europe/Madrid', CURRENT_TIMESTAMP))
                     ON CONFLICT (phone) 
-                    DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
+                    DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
                 """, (phone, name, language))
             else:
                 cursor.execute("""
                     INSERT INTO customers (phone, name, last_visit)
-                    VALUES (%s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
+                    VALUES (%s, %s, timezone('Europe/Madrid', CURRENT_TIMESTAMP))
                     ON CONFLICT (phone) 
-                    DO UPDATE SET name = EXCLUDED.name, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
+                    DO UPDATE SET name = EXCLUDED.name, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
                 """, (phone, name))
             
             conn.commit()
@@ -455,9 +455,9 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO customers (phone, name, language, last_visit)
-                VALUES (%s, 'TEMP', %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
+                VALUES (%s, 'TEMP', %s, timezone('Europe/Madrid', CURRENT_TIMESTAMP))
                 ON CONFLICT (phone) 
-                DO UPDATE SET language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
+                DO UPDATE SET language = EXCLUDED.language, last_visit = timezone('Europe/Madrid', CURRENT_TIMESTAMP)
             """, (phone, language))
             
             conn.commit()
