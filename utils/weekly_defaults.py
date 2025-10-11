@@ -171,6 +171,10 @@ class WeeklyDefaultsManager:
             
             days_updated = cursor.rowcount
             
+            print(f"✅ Configuració setmanal actualitzada: {day_of_week}")
+            print(f"   - Status: {status}")
+            print(f"   - Dies futurs actualitzats: {days_updated}")
+            
             conn.commit()
             cursor.close()
             conn.close()
