@@ -602,6 +602,9 @@ def get_weekly_defaults_api():
     """
     try:
         return jsonify({'error': 'Weekly defaults not implemented'}), 501
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
