@@ -32,6 +32,7 @@ class AppointmentManager:
         - appointments: reserves dels clients
         - customers: informació dels clients (nom, idioma)
         - conversations: historial de converses
+        - opening_hours: horaris d'obertura (ACTUALITZAT amb is_custom)
         """
         try:
             conn = self.get_connection()
@@ -113,7 +114,7 @@ class AppointmentManager:
                 )
             """)
             
-            # Crear taula opening_hours
+            # Crear taula opening_hours amb is_custom
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS opening_hours (
                     id SERIAL PRIMARY KEY,
@@ -123,12 +124,23 @@ class AppointmentManager:
                     lunch_end TIME,
                     dinner_start TIME,
                     dinner_end TIME,
+                    is_custom BOOLEAN DEFAULT FALSE,
                     notes TEXT,
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             print("✅ Taula opening_hours creada/verificada")
+            
+            # Afegir columna is_custom si no existeix
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='opening_hours' AND column_name='is_custom'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE opening_hours ADD COLUMN is_custom BOOLEAN DEFAULT FALSE")
+                print("✅ Columna is_custom afegida a opening_hours")
+                conn.commit()
             
             cursor.execute("SELECT COUNT(*) FROM tables")
             if cursor.fetchone()[0] == 0:
@@ -230,10 +242,7 @@ class AppointmentManager:
                 WHERE phone = %s
             """, (phone,))
             
-            # Debug: Verificar què s'ha guardat
             print(f"✅ Reserva creada: ID={appointment_id}")
-            print(f"   Input: {start_time} -> Guardat: {saved_start}")
-            print(f"   Timezone: {saved_start.tzinfo if hasattr(saved_start, 'tzinfo') else 'No timezone'}")
             
             conn.commit()
             cursor.close()
@@ -278,9 +287,7 @@ class AppointmentManager:
             
             final_num_people = new_num_people if new_num_people else current_num_people
             
-            # Si s'especifica una taula nova, validar que estigui disponible
             if new_table_id is not None:
-                # Validar que la taula existeix i està disponible
                 cursor.execute("""
                     SELECT id, table_number, capacity, status FROM tables
                     WHERE id = %s
@@ -297,7 +304,6 @@ class AppointmentManager:
                     conn.close()
                     return None
                 
-                # Validar que no estigui reservada en aquell horari
                 cursor.execute("""
                     SELECT id FROM appointments
                     WHERE table_id = %s
@@ -313,7 +319,6 @@ class AppointmentManager:
                 
                 table = {'id': table_row[0], 'number': table_row[1], 'capacity': table_row[2]}
             else:
-                # Buscar taula automàticament
                 table = self.find_available_table(new_start, new_end, final_num_people, exclude_appointment_id=appointment_id)
                 if not table:
                     cursor.close()
@@ -400,7 +405,6 @@ class AppointmentManager:
             cursor = conn.cursor()
             cursor.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s AND phone = %s", (appointment_id, phone))
             
-            # Decrementar visit_count del client
             cursor.execute("""
                 UPDATE customers 
                 SET visit_count = GREATEST(visit_count - 1, 0)
@@ -462,11 +466,6 @@ class AppointmentManager:
             print(f"❌ Error guardando cliente: {e}")
     
     def get_customer_name(self, phone):
-        """
-        Obtenir el nom d'un client si existeix
-        
-        Retorna None si el nom és TEMP (client temporal sense nom real)
-        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -474,7 +473,6 @@ class AppointmentManager:
             result = cursor.fetchone()
             cursor.close()
             conn.close()
-            # Retornar None si és TEMP (nom temporal)
             if result and result[0] != 'TEMP':
                 return result[0]
             return None
@@ -496,12 +494,6 @@ class AppointmentManager:
             return None
     
     def save_customer_language(self, phone, language):
-        """
-        Guardar l'idioma preferit d'un client
-        
-        Si el client no existeix, crea registre temporal amb nom 'TEMP'
-        Quan faci la reserva, s'actualitzarà amb el nom real
-        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -527,64 +519,91 @@ class AppointmentManager:
     def get_opening_hours(self, date):
         """
         Obtenir els horaris d'obertura per una data específica
-        Retorna els horaris o els per defecte si no n'hi ha definits
+        Si no existeix a opening_hours, retorna els defaults de weekly_defaults
         """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT status, lunch_start, lunch_end, dinner_start, dinner_end, notes
+                SELECT status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom
                 FROM opening_hours
                 WHERE date = %s
             """, (date,))
             
             result = cursor.fetchone()
-            cursor.close()
-            conn.close()
             
             if result:
+                cursor.close()
+                conn.close()
                 return {
                     'status': result[0],
                     'lunch_start': str(result[1]) if result[1] else None,
                     'lunch_end': str(result[2]) if result[2] else None,
                     'dinner_start': str(result[3]) if result[3] else None,
                     'dinner_end': str(result[4]) if result[4] else None,
-                    'notes': result[5]
+                    'notes': result[5],
+                    'is_custom': result[6]
                 }
             else:
-                # Horaris per defecte
-                return {
-                    'status': 'full_day',
-                    'lunch_start': '12:00',
-                    'lunch_end': '15:00',
-                    'dinner_start': '19:00',
-                    'dinner_end': '22:30',
-                    'notes': None
-                }
+                # No existeix: buscar a weekly_defaults
+                date_obj = datetime.strptime(date, '%Y-%m-%d').date() if isinstance(date, str) else date
+                day_of_week = date_obj.weekday()
+                
+                cursor.execute("""
+                    SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
+                    FROM weekly_defaults
+                    WHERE day_of_week = %s
+                """, (day_of_week,))
+                
+                default = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                if default:
+                    return {
+                        'status': default[0],
+                        'lunch_start': str(default[1]) if default[1] else None,
+                        'lunch_end': str(default[2]) if default[2] else None,
+                        'dinner_start': str(default[3]) if default[3] else None,
+                        'dinner_end': str(default[4]) if default[4] else None,
+                        'notes': None,
+                        'is_custom': False
+                    }
+                else:
+                    return {
+                        'status': 'full_day',
+                        'lunch_start': '12:00',
+                        'lunch_end': '15:00',
+                        'dinner_start': '19:00',
+                        'dinner_end': '22:30',
+                        'notes': None,
+                        'is_custom': False
+                    }
         except Exception as e:
             print(f"❌ Error obteniendo horarios: {e}")
-            # Retornar horaris per defecte en cas d'error
             return {
                 'status': 'full_day',
                 'lunch_start': '12:00',
                 'lunch_end': '15:00',
                 'dinner_start': '19:00',
                 'dinner_end': '22:30',
-                'notes': None
+                'notes': None,
+                'is_custom': False
             }
     
-    def set_opening_hours(self, date, status, lunch_start=None, lunch_end=None, dinner_start=None, dinner_end=None, notes=None):
+    def set_opening_hours(self, date, status, lunch_start=None, lunch_end=None, dinner_start=None, dinner_end=None, notes=None, is_custom=True):
         """
         Establir els horaris d'obertura per una data
+        Si s'edita manualment, is_custom=True per defecte
         """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
-                INSERT INTO opening_hours (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO opening_hours (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 ON CONFLICT (date) 
                 DO UPDATE SET 
                     status = EXCLUDED.status,
@@ -593,8 +612,9 @@ class AppointmentManager:
                     dinner_start = EXCLUDED.dinner_start,
                     dinner_end = EXCLUDED.dinner_end,
                     notes = EXCLUDED.notes,
+                    is_custom = EXCLUDED.is_custom,
                     updated_at = CURRENT_TIMESTAMP
-            """, (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes))
+            """, (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom))
             
             conn.commit()
             cursor.close()
@@ -605,15 +625,13 @@ class AppointmentManager:
             return False
     
     def get_opening_hours_range(self, start_date, end_date):
-        """
-        Obtenir horaris per un rang de dates
-        """
+        """Obtenir horaris per un rang de dates"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes
+                SELECT date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom
                 FROM opening_hours
                 WHERE date >= %s AND date <= %s
                 ORDER BY date
@@ -632,7 +650,8 @@ class AppointmentManager:
                     'lunch_end': str(row[3]) if row[3] else None,
                     'dinner_start': str(row[4]) if row[4] else None,
                     'dinner_end': str(row[5]) if row[5] else None,
-                    'notes': row[6]
+                    'notes': row[6],
+                    'is_custom': row[7]
                 })
             
             return hours_list
@@ -641,20 +660,16 @@ class AppointmentManager:
             return []
     
     def is_restaurant_open(self, date, time):
-        """
-        Verificar si el restaurant està obert en una data i hora específiques
-        """
+        """Verificar si el restaurant està obert en una data i hora específiques"""
         try:
             hours = self.get_opening_hours(date)
             
             if hours['status'] == 'closed':
                 return False, "Restaurant tancat"
             
-            # Convertir time string a minuts des de mitjanit
             time_parts = time.split(':')
             time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
             
-            # Comprovar dinar
             if hours['status'] in ['full_day', 'lunch_only'] and hours['lunch_start'] and hours['lunch_end']:
                 lunch_start_parts = hours['lunch_start'].split(':')
                 lunch_start_minutes = int(lunch_start_parts[0]) * 60 + int(lunch_start_parts[1])
@@ -664,7 +679,6 @@ class AppointmentManager:
                 if lunch_start_minutes <= time_minutes < lunch_end_minutes:
                     return True, "Dinar"
             
-            # Comprovar sopar
             if hours['status'] in ['full_day', 'dinner_only'] and hours['dinner_start'] and hours['dinner_end']:
                 dinner_start_parts = hours['dinner_start'].split(':')
                 dinner_start_minutes = int(dinner_start_parts[0]) * 60 + int(dinner_start_parts[1])
@@ -678,63 +692,6 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error verificando si está abierto: {e}")
             return True, "Error - assumint obert"
-    
-    def set_recurring_opening_hours(self, day_of_week, status, start_date, end_date, lunch_start=None, lunch_end=None, dinner_start=None, dinner_end=None, notes=None, overwrite=False):
-        """
-        Establir horaris recurrents per un dia de la setmana
-        day_of_week: 0=dilluns, 1=dimarts, ..., 6=diumenge
-        overwrite: Si True, sobreescriu configuracions existents
-        """
-        try:
-            from datetime import datetime, timedelta
-            
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-            
-            current_date = start
-            dates_updated = 0
-            dates_skipped = 0
-            
-            while current_date <= end:
-                # Comprovar si és el dia de la setmana correcte (0=dilluns)
-                if current_date.weekday() == day_of_week:
-                    # Si no sobreescrivim, comprovar si ja existeix configuració
-                    if not overwrite:
-                        existing = self.get_opening_hours(current_date.isoformat())
-                        # Si ja té configuració personalitzada (no és per defecte), saltar
-                        if existing and existing.get('notes'):
-                            dates_skipped += 1
-                            current_date += timedelta(days=1)
-                            continue
-                    
-                    # Establir horaris per aquest dia
-                    success = self.set_opening_hours(
-                        date=current_date.isoformat(),
-                        status=status,
-                        lunch_start=lunch_start,
-                        lunch_end=lunch_end,
-                        dinner_start=dinner_start,
-                        dinner_end=dinner_end,
-                        notes=notes
-                    )
-                    
-                    if success:
-                        dates_updated += 1
-                
-                current_date += timedelta(days=1)
-            
-            return {
-                'success': True,
-                'dates_updated': dates_updated,
-                'dates_skipped': dates_skipped
-            }
-        
-        except Exception as e:
-            print(f"❌ Error estableciendo horarios recurrentes: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
 
 
 class ConversationManager:
@@ -745,15 +702,11 @@ class ConversationManager:
         return psycopg2.connect(self.database_url)
     
     def clean_old_messages(self):
-        """
-        Eliminar missatges de més de 15 dies de TOTS els usuaris
-        S'executa automàticament abans de guardar nous missatges
-        """
+        """Eliminar missatges de més de 15 dies de TOTS els usuaris"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Eliminar missatges creats fa més de 15 dies
             cursor.execute("""
                 DELETE FROM conversations 
                 WHERE created_at < NOW() - INTERVAL '15 days'
@@ -770,13 +723,8 @@ class ConversationManager:
             print(f"❌ Error limpiando mensajes antiguos: {e}")
     
     def save_message(self, phone, role, content):
-        """
-        Guardar un missatge a l'historial
-        
-        Abans de guardar, neteja missatges antics automàticament
-        """
+        """Guardar un missatge a l'historial"""
         try:
-            # IMPORTANT: Netejar missatges antics abans de guardar
             self.clean_old_messages()
             
             conn = self.get_connection()
@@ -789,14 +737,11 @@ class ConversationManager:
             print(f"❌ Error guardando mensaje: {e}")
     
     def get_history(self, phone, limit=10):
-        """
-        Obtenir historial de conversa NOMÉS dels últims 10 minuts
-        """
+        """Obtenir historial de conversa NOMÉS dels últims 10 minuts"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Només obtenir missatges dels últims 10 minuts
             cursor.execute("""
                 SELECT role, content 
                 FROM conversations 
@@ -826,14 +771,11 @@ class ConversationManager:
             print(f"❌ Error limpiando historial: {e}")
     
     def get_message_count(self, phone):
-        """
-        Comptar missatges dels últims 10 minuts
-        """
+        """Comptar missatges dels últims 10 minuts"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Comptar només missatges dels últims 10 minuts
             cursor.execute("""
                 SELECT COUNT(*) 
                 FROM conversations 

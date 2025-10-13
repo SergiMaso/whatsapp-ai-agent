@@ -1,8 +1,10 @@
 """
 Gestió de configuració setmanal per defecte per horaris d'obertura
+ACTUALITZAT: Ara inicialitza opening_hours amb 3 mesos per endavant
 """
 import psycopg2
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,6 +27,7 @@ class WeeklyDefaultsManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Crear taula weekly_defaults
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS weekly_defaults (
                     id SERIAL PRIMARY KEY,
@@ -52,13 +55,133 @@ class WeeklyDefaultsManager:
                     """, (day_num, day_name))
                 
                 print("✅ Configuración semanal por defecto inicializada")
+                conn.commit()
             
-            conn.commit()
+            # IMPORTANT: Afegir columna is_custom a opening_hours si no existeix
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='opening_hours' AND column_name='is_custom'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE opening_hours ADD COLUMN is_custom BOOLEAN DEFAULT FALSE")
+                print("✅ Columna is_custom afegida a opening_hours")
+                conn.commit()
+            
+            # Generar opening_hours per 3 mesos si està buit
+            cursor.execute("SELECT COUNT(*) FROM opening_hours")
+            if cursor.fetchone()[0] == 0:
+                self._generate_opening_hours_3_months(cursor)
+                print("✅ Opening hours generat per 3 mesos")
+                conn.commit()
+            
             cursor.close()
             conn.close()
             
         except Exception as e:
             print(f"❌ Error creant taula weekly_defaults: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _generate_opening_hours_3_months(self, cursor):
+        """
+        Generar opening_hours per als propers 3 mesos basant-se en weekly_defaults
+        """
+        try:
+            today = datetime.now().date()
+            end_date = today + timedelta(days=90)  # 3 mesos
+            
+            # Obtenir tots els defaults
+            cursor.execute("""
+                SELECT day_of_week, status, lunch_start, lunch_end, dinner_start, dinner_end
+                FROM weekly_defaults
+                ORDER BY day_of_week
+            """)
+            defaults = {row[0]: row[1:] for row in cursor.fetchall()}
+            
+            current_date = today
+            count = 0
+            
+            while current_date <= end_date:
+                day_of_week = current_date.weekday()  # 0=dilluns, 6=diumenge
+                
+                if day_of_week in defaults:
+                    status, lunch_start, lunch_end, dinner_start, dinner_end = defaults[day_of_week]
+                    
+                    cursor.execute("""
+                        INSERT INTO opening_hours 
+                        (date, status, lunch_start, lunch_end, dinner_start, dinner_end, is_custom)
+                        VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+                        ON CONFLICT (date) DO NOTHING
+                    """, (current_date, status, lunch_start, lunch_end, dinner_start, dinner_end))
+                    
+                    count += 1
+                
+                current_date += timedelta(days=1)
+            
+            print(f"📅 Generat opening_hours per {count} dies")
+            
+        except Exception as e:
+            print(f"❌ Error generant opening_hours: {e}")
+            raise
+    
+    def generate_next_month(self):
+        """
+        Generar opening_hours pel mes següent
+        (Executar automàticament cada mes o manualment)
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Trobar l'última data a opening_hours
+            cursor.execute("SELECT MAX(date) FROM opening_hours")
+            last_date = cursor.fetchone()[0]
+            
+            if not last_date:
+                last_date = datetime.now().date()
+            
+            # Generar el mes següent
+            start_date = last_date + timedelta(days=1)
+            end_date = start_date + timedelta(days=30)
+            
+            # Obtenir defaults
+            cursor.execute("""
+                SELECT day_of_week, status, lunch_start, lunch_end, dinner_start, dinner_end
+                FROM weekly_defaults
+                ORDER BY day_of_week
+            """)
+            defaults = {row[0]: row[1:] for row in cursor.fetchall()}
+            
+            current_date = start_date
+            count = 0
+            
+            while current_date <= end_date:
+                day_of_week = current_date.weekday()
+                
+                if day_of_week in defaults:
+                    status, lunch_start, lunch_end, dinner_start, dinner_end = defaults[day_of_week]
+                    
+                    cursor.execute("""
+                        INSERT INTO opening_hours 
+                        (date, status, lunch_start, lunch_end, dinner_start, dinner_end, is_custom)
+                        VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+                        ON CONFLICT (date) DO NOTHING
+                    """, (current_date, status, lunch_start, lunch_end, dinner_start, dinner_end))
+                    
+                    count += 1
+                
+                current_date += timedelta(days=1)
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            print(f"✅ Generat {count} dies addicionals")
+            return count
+            
+        except Exception as e:
+            print(f"❌ Error generant mes següent: {e}")
+            return 0
     
     def get_all_defaults(self):
         """Obtenir configuració per defecte per tots els dies"""
@@ -119,7 +242,6 @@ class WeeklyDefaultsManager:
                     'dinner_end': str(row[4]) if row[4] else None
                 }
             else:
-                # Retornar configuració per defecte si no existeix
                 return {
                     'status': 'full_day',
                     'lunch_start': '12:00',
@@ -136,7 +258,7 @@ class WeeklyDefaultsManager:
                       dinner_start=None, dinner_end=None):
         """
         Actualitzar configuració per defecte d'un dia de la setmana
-        I aplicar als dies futurs que NO tinguin configuració customitzada
+        I aplicar als dies futurs que NO siguin personalitzats (is_custom=FALSE)
         """
         try:
             conn = self.get_connection()
@@ -150,43 +272,62 @@ class WeeklyDefaultsManager:
                 WHERE day_of_week = %s
             """, (status, lunch_start, lunch_end, dinner_start, dinner_end, day_of_week))
             
-            # Aplicar canvis als dies futurs d'opening_hours que NO tinguin notes (no customitzats)
-            # Només futurs, no passat
-            from datetime import datetime
+            # Convertir day_of_week: Python usa 0=dilluns, PostgreSQL ISODOW usa 1=dilluns
+            postgres_dow = day_of_week + 1  # 0->1, 1->2, ..., 6->7
             today = datetime.now().date()
             
-            # Trobar tots els dies futurs d'aquest day_of_week sense notes
-            # Convertir day_of_week: Python usa 0=dilluns, PostgreSQL EXTRACT(ISODOW) usa 1=dilluns
-            postgres_dow = day_of_week + 1  # 0->1 (dilluns), 1->2 (dimarts), etc.
+            # Comptar quants dies personalitzats NO s'actualitzaran
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM opening_hours
+                WHERE date >= %s
+                  AND EXTRACT(ISODOW FROM date) = %s
+                  AND is_custom = TRUE
+            """, (today, postgres_dow))
             
+            custom_count = cursor.fetchone()[0]
+            
+            # Aplicar canvis als dies futurs NO personalitzats
             cursor.execute("""
                 UPDATE opening_hours
                 SET status = %s, lunch_start = %s, lunch_end = %s,
                     dinner_start = %s, dinner_end = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE date >= %s
                   AND EXTRACT(ISODOW FROM date) = %s
-                  AND (notes IS NULL OR notes = '')
+                  AND is_custom = FALSE
             """, (status, lunch_start, lunch_end, dinner_start, dinner_end, 
-                  today.isoformat(), postgres_dow))  # ISODOW: 1=dilluns, 7=diumenge
+                  today, postgres_dow))
             
             days_updated = cursor.rowcount
             
-            print(f"✅ Configuració setmanal actualitzada: {day_of_week}")
+            day_names = ['Dilluns', 'Dimarts', 'Dimecres', 'Dijous', 'Divendres', 'Dissabte', 'Diumenge']
+            day_name = day_names[day_of_week]
+            
+            print(f"✅ Configuració setmanal actualitzada: {day_name}")
             print(f"   - Status: {status}")
             print(f"   - Dies futurs actualitzats: {days_updated}")
+            if custom_count > 0:
+                print(f"   ⚠️  Dies personalitzats NO afectats: {custom_count}")
             
             conn.commit()
             cursor.close()
             conn.close()
             
+            message = f'Configuració actualitzada i aplicada a {days_updated} dies futurs'
+            if custom_count > 0:
+                message += f'. {custom_count} dies personalitzats no han estat afectats'
+            
             return {
                 'success': True,
                 'days_updated': days_updated,
-                'message': f'Configuració actualitzada i aplicada a {days_updated} dies futurs'
+                'days_custom': custom_count,
+                'message': message
             }
         
         except Exception as e:
             print(f"❌ Error actualitzant configuració setmanal: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'success': False,
                 'error': str(e)
