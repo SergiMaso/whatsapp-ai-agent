@@ -10,7 +10,7 @@ import os
 import threading
 from src.platforms.whatsapp.app import app
 from src.platforms.telegram.bot import main as telegram_main
-from src.config.settings import PORT
+from src.config.settings import PORT, AI_PROVIDER
 
 def run_flask():
     """Run Flask server (WhatsApp)"""
@@ -26,6 +26,7 @@ if __name__ == '__main__':
     print("=" * 60)
     print("🚀 STARTING BOT SYSTEM")
     print("=" * 60)
+    print(f"🤖 AI Provider: {AI_PROVIDER.upper()}")
     print("✅ WhatsApp (Twilio) - ACTIVE")
     print("✅ Telegram Bot - ACTIVE")
     print("=" * 60)

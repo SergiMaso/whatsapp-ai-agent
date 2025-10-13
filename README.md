@@ -36,6 +36,15 @@ Once Docker is running:
 docker-compose logs -f
 ```
 
+**🧪 Test Mode:**
+```bash
+# Local testing
+python test_bot.py
+
+# Docker testing
+docker-compose run --rm test
+```
+
 ### 4️⃣ Docker Only (without database)
 
 ```bash
@@ -161,6 +170,7 @@ whatsapp-ai-agent/
 ├── tests/
 │   └── test_basic.py            # Basic tests
 ├── main.py                      # Application entry point
+├── test_bot.py                  # Test mode for direct interaction
 ├── Dockerfile                   # Docker configuration
 ├── docker-compose.yml           # Docker with PostgreSQL
 ├── .dockerignore                # Files excluded from Docker

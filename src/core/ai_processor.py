@@ -9,7 +9,7 @@ import re
 from unidecode import unidecode
 from src.config.settings import (
     OPENAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, 
-    AWS_REGION, AI_PROVIDER
+    AWS_SESSION_TOKEN, AWS_REGION, AI_PROVIDER
 )
 load_dotenv()
 
@@ -84,12 +84,22 @@ def call_bedrock_claude(messages, tools):
     Call AWS Bedrock Claude model with function calling
     """
     try:
-        bedrock = boto3.client(
-            'bedrock-runtime',
-            aws_access_key_id=AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            region_name=AWS_REGION
-        )
+        # Build client parameters
+        client_params = {
+            'service_name': 'bedrock-runtime',
+            'region_name': AWS_REGION
+        }
+        
+        # Add credentials if provided
+        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+            client_params['aws_access_key_id'] = AWS_ACCESS_KEY_ID
+            client_params['aws_secret_access_key'] = AWS_SECRET_ACCESS_KEY
+            
+            # Add session token if provided (for temporary credentials)
+            if AWS_SESSION_TOKEN:
+                client_params['aws_session_token'] = AWS_SESSION_TOKEN
+        
+        bedrock = boto3.client(**client_params)
         
         # Convert OpenAI format to Claude format
         claude_messages = []
@@ -107,11 +117,17 @@ def call_bedrock_claude(messages, tools):
         # Convert tools to Claude format
         claude_tools = []
         for tool in tools:
-            claude_tools.append({
+            claude_tool = {
                 "name": tool['function']['name'],
-                "description": tool['function']['description'],
-                "input_schema": tool['function']['parameters']
-            })
+                "description": tool['function']['description']
+            }
+            # Only add input_schema if parameters exist
+            if 'parameters' in tool['function']:
+                claude_tool["input_schema"] = tool['function']['parameters']
+            else:
+                claude_tool["input_schema"] = {"type": "object", "properties": {}}
+            
+            claude_tools.append(claude_tool)
         
         body = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -156,6 +172,9 @@ def call_bedrock_claude(messages, tools):
     
     except Exception as e:
         print(f"❌ Error calling Bedrock: {e}")
+        print(f"📍 Region: {AWS_REGION}")
+        print(f"📍 Model ID: anthropic.claude-3-sonnet-20240229-v1:0")
+        print("Check AWS Bedrock Console for available models in your region")
         raise e
 
 def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
@@ -440,6 +459,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         # Choose AI provider
         if AI_PROVIDER == 'bedrock':
             response = call_bedrock_claude(messages, tools)
+            message_response = response['choices'][0]['message']
         else:
             client = OpenAI(api_key=OPENAI_API_KEY)
             response = client.chat.completions.create(
@@ -447,14 +467,25 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 messages=messages,
                 tools=tools
             )
-        
-        message_response = response.choices[0].message
+            message_response = response.choices[0].message
         assistant_reply = ""
         
-        if message_response.tool_calls:
-            tool_call = message_response.tool_calls[0]
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
+        # Handle tool calls for both providers
+        tool_calls = None
+        if AI_PROVIDER == 'bedrock':
+            tool_calls = message_response.get('tool_calls')
+        else:
+            tool_calls = message_response.tool_calls
+            
+        if tool_calls:
+            if AI_PROVIDER == 'bedrock':
+                tool_call = tool_calls[0]
+                function_name = tool_call['function']['name']
+                function_args = json.loads(tool_call['function']['arguments'])
+            else:
+                tool_call = message_response.tool_calls[0]
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
             
             if function_name == "create_appointment":
                 num_people = function_args.get('num_people', 2)
@@ -575,7 +606,10 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
         else:
-            assistant_reply = message_response.content
+            if AI_PROVIDER == 'bedrock':
+                assistant_reply = message_response.get('content', '')
+            else:
+                assistant_reply = message_response.content
         
         print(f"📝 DEBUG: Guardando en historial...")
         

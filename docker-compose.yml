@@ -13,6 +13,16 @@ services:
     depends_on:
       - postgres
 
+  test:
+    build: .
+    command: python test_bot.py
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+    depends_on:
+      - postgres
+
   postgres:
     image: postgres:15
     environment:
