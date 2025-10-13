@@ -3,8 +3,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# OpenAI Configuration
+# AI Configuration - Choose one
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+AI_PROVIDER = os.getenv('AI_PROVIDER', 'openai')  # 'openai' or 'bedrock'
 
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')

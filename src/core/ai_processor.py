@@ -3,10 +3,14 @@ import json
 from langdetect import detect, LangDetectException
 from dotenv import load_dotenv
 from openai import OpenAI
+import boto3
 from datetime import datetime
 import re
 from unidecode import unidecode
-from src.config.settings import OPENAI_API_KEY
+from src.config.settings import (
+    OPENAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, 
+    AWS_REGION, AI_PROVIDER
+)
 load_dotenv()
 
 def detect_language(text):
@@ -74,6 +78,85 @@ def detect_language(text):
         
     except LangDetectException:
         return 'es'
+
+def call_bedrock_claude(messages, tools):
+    """
+    Call AWS Bedrock Claude model with function calling
+    """
+    try:
+        bedrock = boto3.client(
+            'bedrock-runtime',
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            region_name=AWS_REGION
+        )
+        
+        # Convert OpenAI format to Claude format
+        claude_messages = []
+        system_message = ""
+        
+        for msg in messages:
+            if msg['role'] == 'system':
+                system_message = msg['content']
+            else:
+                claude_messages.append({
+                    "role": msg['role'],
+                    "content": msg['content']
+                })
+        
+        # Convert tools to Claude format
+        claude_tools = []
+        for tool in tools:
+            claude_tools.append({
+                "name": tool['function']['name'],
+                "description": tool['function']['description'],
+                "input_schema": tool['function']['parameters']
+            })
+        
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1000,
+            "system": system_message,
+            "messages": claude_messages,
+            "tools": claude_tools
+        }
+        
+        response = bedrock.invoke_model(
+            modelId="anthropic.claude-3-sonnet-20240229-v1:0",
+            body=json.dumps(body)
+        )
+        
+        result = json.loads(response['body'].read())
+        
+        # Convert Claude response to OpenAI format
+        content = result['content'][0]
+        
+        if content['type'] == 'tool_use':
+            return {
+                'choices': [{
+                    'message': {
+                        'tool_calls': [{
+                            'function': {
+                                'name': content['name'],
+                                'arguments': json.dumps(content['input'])
+                            }
+                        }]
+                    }
+                }]
+            }
+        else:
+            return {
+                'choices': [{
+                    'message': {
+                        'content': content['text'],
+                        'tool_calls': None
+                    }
+                }]
+            }
+    
+    except Exception as e:
+        print(f"❌ Error calling Bedrock: {e}")
+        raise e
 
 def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
@@ -296,69 +379,74 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        
-        response = client.chat.completions.create(
-            model="gpt-5-mini",
-            messages=messages,
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "create_appointment",
-                        "description": "Crear una reserva nova quan tinguis TOTES les dades necessaris",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "client_name": {"type": "string", "description": "Nom del client"},
-                                "date": {"type": "string", "description": "Data en format YYYY-MM-DD"},
-                                "time": {"type": "string", "description": "Hora en format HH:MM (24 hores)"},
-                                "num_people": {"type": "integer", "description": "Número de persones (1-4)"}
-                            },
-                            "required": ["client_name", "date", "time", "num_people"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "update_appointment",
-                        "description": "Modificar/actualitzar una reserva existent sense cancel·lar-la",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "appointment_id": {"type": "integer", "description": "ID de la reserva a modificar"},
-                                "new_date": {"type": "string", "description": "Nova data (YYYY-MM-DD) o null si no canvia"},
-                                "new_time": {"type": "string", "description": "Nova hora (HH:MM) o null si no canvia"},
-                                "new_num_people": {"type": "integer", "description": "Nou número de persones o null si no canvia"}
-                            },
-                            "required": ["appointment_id"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "list_appointments",
-                        "description": "Llistar les reserves de l'usuari"
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "cancel_appointment",
-                        "description": "Cancel·lar una reserva existent",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "appointment_id": {"type": "integer", "description": "ID de la reserva"}
-                            },
-                            "required": ["appointment_id"]
-                        }
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_appointment",
+                    "description": "Crear una reserva nova quan tinguis TOTES les dades necessaris",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "client_name": {"type": "string", "description": "Nom del client"},
+                            "date": {"type": "string", "description": "Data en format YYYY-MM-DD"},
+                            "time": {"type": "string", "description": "Hora en format HH:MM (24 hores)"},
+                            "num_people": {"type": "integer", "description": "Número de persones (1-4)"}
+                        },
+                        "required": ["client_name", "date", "time", "num_people"]
                     }
                 }
-            ]
-        )
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "update_appointment",
+                    "description": "Modificar/actualitzar una reserva existent sense cancel·lar-la",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "appointment_id": {"type": "integer", "description": "ID de la reserva a modificar"},
+                            "new_date": {"type": "string", "description": "Nova data (YYYY-MM-DD) o null si no canvia"},
+                            "new_time": {"type": "string", "description": "Nova hora (HH:MM) o null si no canvia"},
+                            "new_num_people": {"type": "integer", "description": "Nou número de persones o null si no canvia"}
+                        },
+                        "required": ["appointment_id"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_appointments",
+                    "description": "Llistar les reserves de l'usuari"
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancel_appointment",
+                    "description": "Cancel·lar una reserva existent",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "appointment_id": {"type": "integer", "description": "ID de la reserva"}
+                        },
+                        "required": ["appointment_id"]
+                    }
+                }
+            }
+        ]
+        
+        # Choose AI provider
+        if AI_PROVIDER == 'bedrock':
+            response = call_bedrock_claude(messages, tools)
+        else:
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                tools=tools
+            )
         
         message_response = response.choices[0].message
         assistant_reply = ""

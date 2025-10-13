@@ -195,13 +195,29 @@ Bot: "Hello again, Marc! How can I help you today?" [uses saved language + name]
 
 ## 📱 ENVIRONMENT VARIABLES (.env)
 
-### 🔑 OpenAI (REQUIRED)
+### 🤖 AI Provider Configuration
+```bash
+AI_PROVIDER=openai  # Choose 'openai' or 'bedrock'
+```
+
+### 🔑 OpenAI (Option 1)
 ```bash
 OPENAI_API_KEY=sk-proj-your-key-here
 ```
 - **Where to get it**: https://platform.openai.com/api-keys
 - **Required for**: Natural language processing and bot AI
 - **Cost**: Pay per use (GPT-4)
+
+### ☁️ AWS Bedrock (Option 2)
+```bash
+AWS_ACCESS_KEY_ID=your-aws-access-key
+AWS_SECRET_ACCESS_KEY=your-aws-secret-key
+AWS_REGION=us-east-1
+```
+- **Where to get them**: AWS IAM Console
+- **Required for**: Claude 3 Sonnet via AWS Bedrock
+- **Cost**: AWS Bedrock pricing
+- **Note**: Requires Bedrock model access in your AWS account
 
 ### 📞 Twilio - WhatsApp (OPTIONAL)
 ```bash
@@ -245,30 +261,36 @@ PORT=8080  # Server port (default 8080)
 ## 🚨 MINIMUM REQUIRED CONFIGURATION
 
 **To work, you need AT LEAST:**
-- ✅ `OPENAI_API_KEY` (required)
+- ✅ `AI_PROVIDER` set to 'openai' or 'bedrock'
+- ✅ Either `OPENAI_API_KEY` OR AWS credentials (depending on AI_PROVIDER)
 - ✅ `DATABASE_URL` (Docker does this automatically)
 - ✅ Either: `TELEGRAM_BOT_TOKEN` OR the 3 Twilio variables
 
 **Configuration examples:**
 
-**Telegram only:**
+**Telegram only (OpenAI):**
 ```bash
+AI_PROVIDER=openai
 OPENAI_API_KEY=sk-proj-...
 TELEGRAM_BOT_TOKEN=1234567890:ABC...
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/restaurant_bot
 ```
 
-**WhatsApp only:**
+**WhatsApp only (AWS Bedrock):**
 ```bash
-OPENAI_API_KEY=sk-proj-...
+AI_PROVIDER=bedrock
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
 TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
 TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/restaurant_bot
 ```
 
-**Both (recommended):**
+**Both platforms (recommended):**
 ```bash
+AI_PROVIDER=openai
 OPENAI_API_KEY=sk-proj-...
 TELEGRAM_BOT_TOKEN=1234567890:ABC...
 TWILIO_ACCOUNT_SID=AC...
@@ -282,9 +304,10 @@ DATABASE_URL=postgresql://postgres:postgres@postgres:5432/restaurant_bot
 ## ⚠️ IMPORTANT
 
 1. **Always run `reset_database.py` BEFORE deploying** if you change the DB structure
-2. The bot now **only accepts reservations for maximum 4 people** (previously 8)
-3. The default language is **English** (previously Spanish)
-4. The bot **will never say "User"** if it doesn't know the name
+2. The bot now **supports both OpenAI and AWS Bedrock** for AI processing
+3. The bot now **only accepts reservations for maximum 4 people** (previously 8)
+4. The default language is **English** (previously Spanish)
+5. The bot **will never say "User"** if it doesn't know the name
 
 ---
 
