@@ -124,25 +124,42 @@ class WeeklyDefaultsManager:
             print(f"❌ Error generant opening_hours: {e}")
             raise
     
-    def generate_next_month(self):
+    def weekly_maintenance(self):
         """
-        Generar opening_hours pel mes següent
-        (Executar automàticament cada mes o manualment)
+        Manteniment setmanal automàtic (cada dilluns a les 2:00 AM):
+        1. Genera la setmana que comença 3 mesos després
+        2. Elimina la setmana que va començar fa 28 dies
+        
+        Això manté sempre una finestra de ~3 mesos de dades futures
         """
         try:
+            from datetime import datetime, timedelta
+            
+            today = datetime.now().date()
+            
+            print("=" * 70)
+            print(f"🔄 MANTENIMENT SETMANAL AUTOMÀTIC - {today.strftime('%d/%m/%Y %H:%M')}")
+            print("=" * 70)
+            
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Trobar l'última data a opening_hours
-            cursor.execute("SELECT MAX(date) FROM opening_hours")
-            last_date = cursor.fetchone()[0]
+            # 1️⃣ GENERAR: Setmana que comença 3 mesos després
+            target_date = today + timedelta(days=90)  # 3 mesos endavant
             
-            if not last_date:
-                last_date = datetime.now().date()
+            # Trobar el proper dilluns des de target_date
+            days_until_monday = (7 - target_date.weekday()) % 7
+            if days_until_monday == 0 and target_date.weekday() != 0:
+                days_until_monday = 7
+            start_of_week = target_date + timedelta(days=days_until_monday)
             
-            # Generar el mes següent
-            start_date = last_date + timedelta(days=1)
-            end_date = start_date + timedelta(days=30)
+            # Si target_date ja és dilluns, usar aquest
+            if target_date.weekday() == 0:
+                start_of_week = target_date
+            
+            end_of_week = start_of_week + timedelta(days=6)  # Dilluns a Diumenge
+            
+            print(f"📅 Generant setmana: {start_of_week.strftime('%d/%m/%Y')} - {end_of_week.strftime('%d/%m/%Y')}")
             
             # Obtenir defaults
             cursor.execute("""
@@ -152,10 +169,10 @@ class WeeklyDefaultsManager:
             """)
             defaults = {row[0]: row[1:] for row in cursor.fetchall()}
             
-            current_date = start_date
-            count = 0
+            current_date = start_of_week
+            generated_count = 0
             
-            while current_date <= end_date:
+            while current_date <= end_of_week:
                 day_of_week = current_date.weekday()
                 
                 if day_of_week in defaults:
@@ -168,20 +185,67 @@ class WeeklyDefaultsManager:
                         ON CONFLICT (date) DO NOTHING
                     """, (current_date, status, lunch_start, lunch_end, dinner_start, dinner_end))
                     
-                    count += 1
+                    if cursor.rowcount > 0:
+                        generated_count += 1
                 
                 current_date += timedelta(days=1)
+            
+            print(f"✅ Generats {generated_count} dies nous")
+            
+            # 2️⃣ ELIMINAR: Setmana que va començar fa 28 dies (4 setmanes)
+            delete_date = today - timedelta(days=28)
+            
+            # Trobar el dilluns d'aquella setmana
+            days_since_monday = delete_date.weekday()
+            start_of_old_week = delete_date - timedelta(days=days_since_monday)
+            end_of_old_week = start_of_old_week + timedelta(days=6)
+            
+            print(f"🗑️  Eliminant setmana antiga: {start_of_old_week.strftime('%d/%m/%Y')} - {end_of_old_week.strftime('%d/%m/%Y')}")
+            
+            cursor.execute("""
+                DELETE FROM opening_hours
+                WHERE date >= %s AND date <= %s
+            """, (start_of_old_week, end_of_old_week))
+            
+            deleted_count = cursor.rowcount
+            print(f"✅ Eliminats {deleted_count} dies antics")
+            
+            # 3️⃣ ESTADÍSTIQUES FINALS
+            cursor.execute("SELECT COUNT(*) FROM opening_hours")
+            total_days = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT MIN(date), MAX(date) FROM opening_hours")
+            min_date, max_date = cursor.fetchone()
+            
+            print(f"📊 Total dies a BD: {total_days}")
+            if min_date and max_date:
+                print(f"📊 Rang de dates: {min_date.strftime('%d/%m/%Y')} - {max_date.strftime('%d/%m/%Y')}")
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            print(f"✅ Generat {count} dies addicionals")
-            return count
+            print("=" * 70)
+            print("✅ MANTENIMENT COMPLETAT")
+            print("=" * 70)
+            
+            return {
+                'success': True,
+                'generated': generated_count,
+                'deleted': deleted_count,
+                'total_days': total_days
+            }
             
         except Exception as e:
-            print(f"❌ Error generant mes següent: {e}")
-            return 0
+            print("=" * 70)
+            print(f"❌ ERROR EN MANTENIMENT SETMANAL: {e}")
+            print("=" * 70)
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     def get_all_defaults(self):
         """Obtenir configuració per defecte per tots els dies"""
