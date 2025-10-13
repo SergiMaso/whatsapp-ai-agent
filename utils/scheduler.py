@@ -27,8 +27,8 @@ def start_scheduler(weekly_defaults_manager):
         func=weekly_defaults_manager.weekly_maintenance,
         trigger=CronTrigger(
             day_of_week='mon',  # Dilluns
-            hour=16,             # 2:00 AM
-            minute=30,
+            hour=17,             # 2:00 AM
+            minute=45,
             timezone=barcelona_tz
         ),
         id='weekly_maintenance',

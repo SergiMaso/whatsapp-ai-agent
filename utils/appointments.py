@@ -43,7 +43,8 @@ class AppointmentManager:
                     id SERIAL PRIMARY KEY,
                     table_number INTEGER UNIQUE NOT NULL,
                     capacity INTEGER NOT NULL,
-                    status VARCHAR(20) DEFAULT 'available'
+                    status VARCHAR(20) DEFAULT 'available',
+                    pairing INTEGER[]
                 )
             """)
             
@@ -144,9 +145,9 @@ class AppointmentManager:
             
             cursor.execute("SELECT COUNT(*) FROM tables")
             if cursor.fetchone()[0] == 0:
-                for i in range(1, 21):
+                for i in range(1, 12):
                     cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 4)", (i,))
-                for i in range(21, 29):
+                for i in range(12, 19):
                     cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 2)", (i,))
             
             conn.commit()

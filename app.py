@@ -329,7 +329,7 @@ def get_tables():
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, table_number, capacity, status
+            SELECT id, table_number, capacity, status, pairing
             FROM tables
             ORDER BY table_number
         """)
@@ -340,7 +340,8 @@ def get_tables():
                 'id': row[0],
                 'table_number': row[1],
                 'capacity': row[2],
-                'status': row[3]
+                'status': row[3],
+                'pairing': row[4] if row[4] else []
             })
         
         cursor.close()
@@ -352,24 +353,96 @@ def get_tables():
         print(f"❌ Error obtenint taules: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/tables/<int:table_id>', methods=['PUT'])
-def update_table_status(table_id):
-    """Actualitzar status d'una taula"""
+
+@app.route('/api/tables', methods=['POST'])
+def create_table():
+    """Crear nova taula"""
     try:
         data = request.json
-        status = data.get('status')
         
-        if status not in ['available', 'unavailable']:
-            return jsonify({'error': 'Status invàlid. Usa: available, unavailable'}), 400
+        required = ['table_number', 'capacity']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'Camp obligatori: {field}'}), 400
         
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
+        cursor.execute("SELECT id FROM tables WHERE table_number = %s", (data['table_number'],))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
+        
+        pairing = data.get('pairing', None)
+        status = data.get('status', 'available')
+        
         cursor.execute("""
-            UPDATE tables
-            SET status = %s
-            WHERE id = %s
-        """, (status, table_id))
+            INSERT INTO tables (table_number, capacity, status, pairing)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (data['table_number'], data['capacity'], status, pairing))
+        
+        new_id = cursor.fetchone()[0]
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'message': 'Taula creada correctament', 'id': new_id}), 201
+    
+    except Exception as e:
+        print(f"❌ Error creant taula: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tables/<int:table_id>', methods=['PUT'])
+def update_table(table_id):
+    """Actualitzar paràmetres d'una taula"""
+    try:
+        data = request.json
+        
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        updates = []
+        values = []
+        
+        if 'table_number' in data:
+            cursor.execute("SELECT id FROM tables WHERE table_number = %s AND id != %s", 
+                          (data['table_number'], table_id))
+            if cursor.fetchone():
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
+            updates.append("table_number = %s")
+            values.append(data['table_number'])
+        
+        if 'capacity' in data:
+            updates.append("capacity = %s")
+            values.append(data['capacity'])
+        
+        if 'status' in data:
+            if data['status'] not in ['available', 'unavailable']:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Status invàlid. Usa: available, unavailable'}), 400
+            updates.append("status = %s")
+            values.append(data['status'])
+        
+        if 'pairing' in data:
+            updates.append("pairing = %s")
+            values.append(data['pairing'])
+        
+        if not updates:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'No hi ha camps per actualitzar'}), 400
+        
+        values.append(table_id)
+        query = f"UPDATE tables SET {', '.join(updates)} WHERE id = %s"
+        
+        cursor.execute(query, values)
         
         if cursor.rowcount == 0:
             cursor.close()
@@ -380,11 +453,49 @@ def update_table_status(table_id):
         cursor.close()
         conn.close()
         
-        return jsonify({'message': 'Status actualitzat correctament'}), 200
+        return jsonify({'message': 'Taula actualitzada correctament'}), 200
     
     except Exception as e:
-        print(f"❌ Error actualitzant status: {e}")
+        print(f"❌ Error actualitzant taula: {e}")
         return jsonify({'error': str(e)}), 500
+    
+
+@app.route('/api/tables/<int:table_id>', methods=['DELETE'])
+def delete_table(table_id):
+    """Eliminar una taula (només si no té reserves futures)"""
+    try:
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT COUNT(*) FROM appointments
+            WHERE table_id = %s AND status = 'confirmed' AND date >= CURRENT_DATE
+        """, (table_id,))
+        
+        count = cursor.fetchone()[0]
+        
+        if count > 0:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': f'No es pot eliminar. La taula té {count} reserves futures'}), 409
+        
+        cursor.execute("DELETE FROM tables WHERE id = %s", (table_id,))
+        
+        if cursor.rowcount == 0:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Taula no trobada'}), 404
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'message': 'Taula eliminada correctament'}), 200
+    
+    except Exception as e:
+        print(f"❌ Error eliminant taula: {e}")
+        return jsonify({'error': str(e)}), 500
+    
 
 @app.route('/api/customers', methods=['GET'])
 def get_customers():
