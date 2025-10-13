@@ -145,10 +145,13 @@ class AppointmentManager:
             
             cursor.execute("SELECT COUNT(*) FROM tables")
             if cursor.fetchone()[0] == 0:
-                for i in range(1, 12):
-                    cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 4)", (i,))
-                for i in range(12, 19):
-                    cursor.execute("INSERT INTO tables (table_number, capacity) VALUES (%s, 2)", (i,))
+                # 12 taules de 4 persones
+                for i in range(1, 13):
+                    cursor.execute("INSERT INTO tables (table_number, capacity, pairing) VALUES (%s, 4, NULL)", (i,))
+                # 5 taules de 2 persones
+                for i in range(13, 18):
+                    cursor.execute("INSERT INTO tables (table_number, capacity, pairing) VALUES (%s, 2, NULL)", (i,))
+                print("✅ Taules per defecte creades: 12 de 4 + 5 de 2")
             
             conn.commit()
             cursor.close()
@@ -209,32 +212,129 @@ class AppointmentManager:
             print(f"❌ Error buscando mesa: {e}")
             return None
     
+    def find_combined_tables(self, start_time, end_time, num_people, exclude_appointment_id=None):
+        """
+        Buscar taules individuals o combinades per una reserva
+        Retorna: {'tables': [taula1, taula2, ...], 'total_capacity': X}
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Obtenir taules ocupades en aquest horari
+            if exclude_appointment_id:
+                cursor.execute("""
+                    SELECT table_id FROM appointments 
+                    WHERE status = 'confirmed' AND id != %s
+                      AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
+                """, (exclude_appointment_id, end_time, start_time, start_time, end_time))
+            else:
+                cursor.execute("""
+                    SELECT table_id FROM appointments 
+                    WHERE status = 'confirmed'
+                      AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
+                """, (end_time, start_time, start_time, end_time))
+            
+            occupied_ids = [row[0] for row in cursor.fetchall()]
+            
+            # Obtenir totes les taules disponibles
+            cursor.execute("""
+                SELECT id, table_number, capacity, pairing FROM tables 
+                WHERE status = 'available' AND id NOT IN %s
+                ORDER BY capacity DESC, table_number
+            """, (tuple(occupied_ids) if occupied_ids else (0,),))
+            
+            available_tables = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            # 1. Intentar trobar una sola taula amb capacitat suficient
+            for table in available_tables:
+                if table[2] >= num_people:  # capacity
+                    return {
+                        'tables': [{
+                            'id': table[0],
+                            'number': table[1],
+                            'capacity': table[2]
+                        }],
+                        'total_capacity': table[2]
+                    }
+            
+            # 2. Intentar combinar taules amb pairing
+            for table in available_tables:
+                table_id, table_num, capacity, pairing = table
+                
+                if not pairing:
+                    continue
+                
+                # Buscar taules del pairing que estiguin disponibles
+                paired_tables = []
+                total_cap = capacity
+                
+                for paired_num in pairing:
+                    # Buscar si la taula paired està disponible
+                    paired_table = next(
+                        (t for t in available_tables if t[1] == paired_num),
+                        None
+                    )
+                    
+                    if paired_table:
+                        paired_tables.append({
+                            'id': paired_table[0],
+                            'number': paired_table[1],
+                            'capacity': paired_table[2]
+                        })
+                        total_cap += paired_table[2]
+                        
+                        # Si ja tenim prou capacitat, retornar
+                        if total_cap >= num_people:
+                            return {
+                                'tables': [{
+                                    'id': table_id,
+                                    'number': table_num,
+                                    'capacity': capacity
+                                }] + paired_tables,
+                                'total_capacity': total_cap
+                            }
+            
+            # 3. No s'ha trobat combinació vàlida
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error buscant taules combinades: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
-            # Convertir date i time a TIMESTAMP
             start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
             
             customer_language = self.get_customer_language(phone) or 'es'
-            table = self.find_available_table(start_time, end_time, num_people)
-            if not table:
+            
+            # Buscar taules (individuals o combinades)
+            tables_result = self.find_combined_tables(start_time, end_time, num_people)
+            
+            if not tables_result:
                 return None
             
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                INSERT INTO appointments 
-                (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, start_time, end_time
-            """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed'))
-            
-            result = cursor.fetchone()
-            appointment_id = result[0]
-            saved_start = result[1]
-            saved_end = result[2]
+            # Crear una reserva per cada taula
+            appointment_ids = []
+            for table in tables_result['tables']:
+                cursor.execute("""
+                    INSERT INTO appointments 
+                    (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, start_time, end_time
+                """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed'))
+                
+                result = cursor.fetchone()
+                appointment_ids.append(result[0])
             
             # Incrementar visit_count del client
             cursor.execute("""
@@ -243,13 +343,24 @@ class AppointmentManager:
                 WHERE phone = %s
             """, (phone,))
             
-            print(f"✅ Reserva creada: ID={appointment_id}")
+            print(f"✅ Reserva creada: IDs={appointment_ids} - {len(tables_result['tables'])} taules")
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            return {'id': appointment_id, 'table': table, 'start': start_time, 'end': end_time}
+            return {
+                'id': appointment_ids[0],  # ID principal
+                'ids': appointment_ids,
+                'table': tables_result['tables'][0] if len(tables_result['tables']) == 1 else {
+                    'number': f"{tables_result['tables'][0]['number']}+{tables_result['tables'][1]['number']}",
+                    'capacity': tables_result['total_capacity'],
+                    'combined': True
+                },
+                'tables': tables_result['tables'],
+                'start': start_time,
+                'end': end_time
+            }
         
         except Exception as e:
             print(f"❌ Error creando reserva: {e}")

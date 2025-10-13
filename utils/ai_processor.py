@@ -167,8 +167,8 @@ DATA ACTUAL: Avui és {day_name} {today_str}.
 {customer_context}{appointment_context}
 
 INFORMACIÓ DEL RESTAURANT:
-- Capacitat: 20 taules de 4 persones i 8 taules de 2 persones
-- MÀXIM 4 persones per reserva
+- Capacitat: 12 taules de 4 persones i 5 taules de 2 persones
+- MÀXIM 8 persones per reserva (el sistema combina taules automàticament si cal)
 - Horaris:
   * Dinar: 12:00 a 15:00
   * Sopar: 19:00 a 22:30
@@ -213,8 +213,8 @@ FECHA ACTUAL: Hoy es {day_name} {today_str}.
 
 INFORMACIÓN DEL RESTAURANTE:
 
-* Capacidad: 20 mesas de 4 personas y 8 mesas de 2 personas
-* MÁXIMO 4 personas por reserva
+* Capacidad: 12 mesas de 4 personas y 5 mesas de 2 personas
+* MÁXIMO 8 personas por reserva (el sistema combina mesas automáticamente si es necesario)
 * Horarios:
 
   * Comida: 12:00 a 15:00
@@ -254,8 +254,8 @@ CURRENT DATE: Today is {day_name} {today_str}.
 
 RESTAURANT INFORMATION:
 
-* Capacity: 20 tables for 4 people and 8 tables for 2 people
-* MAXIMUM 4 people per reservation
+* Capacity: 12 tables for 4 people and 5 tables for 2 people
+* MAXIMUM 8 people per reservation (system automatically combines tables if needed)
 * Hours:
 
   * Lunch: 12:00 to 15:00
@@ -313,7 +313,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                                 "client_name": {"type": "string", "description": "Nom del client"},
                                 "date": {"type": "string", "description": "Data en format YYYY-MM-DD"},
                                 "time": {"type": "string", "description": "Hora en format HH:MM (24 hores)"},
-                                "num_people": {"type": "integer", "description": "Número de persones (1-4)"}
+                                "num_people": {"type": "integer", "description": "Número de persones (1-8)"}
                             },
                             "required": ["client_name", "date", "time", "num_people"]
                         }
@@ -371,11 +371,11 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
             if function_name == "create_appointment":
                 num_people = function_args.get('num_people', 2)
                 
-                if num_people < 1 or num_people > 4:
+                if num_people < 1 or num_people > 8:
                     error_msgs = {
-                        'es': "Lo siento, solo aceptamos reservas de 1 a 4 personas.",
-                        'ca': "Ho sento, només acceptem reserves d'1 a 4 persones.",
-                        'en': "Sorry, we only accept reservations for 1 to 4 people."
+                        'es': "Lo siento, solo aceptamos reservas de 1 a 8 personas.",
+                        'ca': "Ho sento, només acceptem reserves d'1 a 8 persones.",
+                        'en': "Sorry, we only accept reservations for 1 to 8 people."
                     }
                     return error_msgs.get(language, error_msgs['es'])
                 
