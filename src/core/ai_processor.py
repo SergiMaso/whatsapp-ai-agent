@@ -6,7 +6,7 @@ from openai import OpenAI
 from datetime import datetime
 import re
 from unidecode import unidecode
-from utils.appointments import AppointmentManager, ConversationManager
+from src.config.settings import OPENAI_API_KEY
 load_dotenv()
 
 def detect_language(text):
@@ -296,7 +296,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         
-        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        client = OpenAI(api_key=OPENAI_API_KEY)
         
         response = client.chat.completions.create(
             model="gpt-5-mini",

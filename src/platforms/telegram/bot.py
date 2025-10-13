@@ -8,9 +8,9 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from utils.appointments import AppointmentManager, ConversationManager
-from utils.ai_processor import process_message_with_ai, detect_language
-from utils.conversation_state import (
+from src.core.appointments import AppointmentManager, ConversationManager
+from src.core.ai_processor import process_message_with_ai, detect_language
+from src.utils.conversation_state import (
     should_show_time_buttons, 
     should_show_only_dinner,
     should_show_lunch_directly,
@@ -18,16 +18,16 @@ from utils.conversation_state import (
     set_conversation_state, 
     get_conversation_state
 )
-from utils.telegram_keyboards import (
+from src.utils.telegram_keyboards import (
     get_time_slots_keyboard,
     get_lunch_times_keyboard,
     get_dinner_times_keyboard
 )
+from src.config.settings import TELEGRAM_BOT_TOKEN, OPENAI_API_KEY
 
 load_dotenv()
 
-# Configuración - Railway usa variables de entorno directamente
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN')
+# Configuration imported from settings
 
 # LOGS REDUÏTS - Només errors i converses
 logging.basicConfig(
@@ -203,7 +203,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Transcribir con Whisper
         from openai import OpenAI
-        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        client = OpenAI(api_key=OPENAI_API_KEY)
         
         with open(audio_path, 'rb') as audio_file:
             transcript = client.audio.transcriptions.create(

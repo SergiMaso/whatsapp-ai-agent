@@ -4,11 +4,9 @@ from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
 import os
 from dotenv import load_dotenv
-from utils.transcription import transcribe_audio
-from utils.appointments import AppointmentManager, ConversationManager
-from utils.ai_processor import process_message_with_ai
-from utils.weekly_defaults import WeeklyDefaultsManager
-import base64
+from src.core.appointments import AppointmentManager, ConversationManager
+from src.core.ai_processor import process_message_with_ai
+from src.config.settings import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
 from datetime import datetime
 
 load_dotenv()
@@ -16,9 +14,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # Habilitar CORS per al frontend
 
-# Configuración de Twilio
-TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+# Twilio configuration imported from settings
 
 if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
     print("❌ ERROR: Variables de Twilio no configuradas")
@@ -26,10 +22,9 @@ else:
     twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
     print("✅ Cliente Twilio inicializado correctamente")
 
-# Inicializar gestores
+# Initialize managers
 appointment_manager = AppointmentManager()
 conversation_manager = ConversationManager()
-weekly_defaults_manager = WeeklyDefaultsManager()
 
 @app.route('/')
 def home():
@@ -53,20 +48,10 @@ def whatsapp_webhook():
     resp = MessagingResponse()
     
     try:
-        # Si hay audio, transcribirlo
+        # Audio transcription not implemented in this version
         if media_url:
-            print(f"🎤 Transcribiendo audio...")
-            auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
-            auth_header = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
-            
-            transcribed_text = transcribe_audio(media_url, auth_header)
-            
-            if transcribed_text:
-                print(f"📝 Audio transcrito: {transcribed_text}")
-                incoming_msg = transcribed_text
-            else:
-                resp.message("No pude entender el audio. ¿Puedes escribir tu mensaje?")
-                return str(resp)
+            resp.message("Audio messages not supported yet. Please send a text message.")
+            return str(resp)
         
         if not incoming_msg:
             resp.message("Hola! Escribe o envía un mensaje de voz para hacer una reserva.")
@@ -616,47 +601,7 @@ def get_weekly_defaults_api():
     Obtenir configuració per defecte per cada dia de la setmana
     """
     try:
-        defaults = weekly_defaults_manager.get_all_defaults()
-        return jsonify(defaults), 200
-    except Exception as e:
-        print(f"❌ Error obtenint configuració setmanal: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/weekly-defaults/<int:day_of_week>', methods=['PUT'])
-def update_weekly_default_api(day_of_week):
-    """
-    Actualitzar configuració per defecte d'un dia de la setmana
-    I aplicar a tots els dies futurs d'aquest tipus que NO estiguin customitzats
-    """
-    try:
-        data = request.json
-        
-        if day_of_week < 0 or day_of_week > 6:
-            return jsonify({'error': 'day_of_week ha de ser entre 0 (dilluns) i 6 (diumenge)'}), 400
-        
-        # Validar status
-        valid_statuses = ['closed', 'lunch_only', 'dinner_only', 'full_day']
-        if data.get('status') and data['status'] not in valid_statuses:
-            return jsonify({'error': f'Status invàlid. Usa: {", ".join(valid_statuses)}'}), 400
-        
-        # Actualitzar defaults i aplicar
-        result = weekly_defaults_manager.update_default(
-            day_of_week=day_of_week,
-            status=data.get('status', 'full_day'),
-            lunch_start=data.get('lunch_start'),
-            lunch_end=data.get('lunch_end'),
-            dinner_start=data.get('dinner_start'),
-            dinner_end=data.get('dinner_end')
-        )
-        
-        if result['success']:
-            return jsonify(result), 200
-        else:
-            return jsonify(result), 500
-    
-    except Exception as e:
-        print(f"❌ Error actualitzant configuració setmanal: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Weekly defaults not implemented'}), 501
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

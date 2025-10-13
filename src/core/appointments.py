@@ -1,9 +1,6 @@
 import psycopg2
 from datetime import datetime, timedelta
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from src.config.settings import DATABASE_URL
 
 class AppointmentManager:
     """
@@ -16,7 +13,7 @@ class AppointmentManager:
     """
     
     def __init__(self):
-        self.database_url = os.getenv('DATABASE_URL')
+        self.database_url = DATABASE_URL
         self.ensure_tables_exist()
     
     def get_connection(self):
@@ -739,7 +736,7 @@ class AppointmentManager:
 
 class ConversationManager:
     def __init__(self):
-        self.database_url = os.getenv('DATABASE_URL')
+        self.database_url = DATABASE_URL
     
     def get_connection(self):
         return psycopg2.connect(self.database_url)
