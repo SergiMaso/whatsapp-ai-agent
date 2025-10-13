@@ -3,10 +3,11 @@ from flask_cors import CORS
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
 import os
+import sys
 from dotenv import load_dotenv
 from src.core.appointments import AppointmentManager, ConversationManager
 from src.core.ai_processor import process_message_with_ai
-from src.config.settings import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+from src.config.settings import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, DEBUG_MODE
 from datetime import datetime
 
 load_dotenv()
@@ -43,7 +44,19 @@ def whatsapp_webhook():
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
     
-    print(f"📱 Mensaje WhatsApp de {from_number}: {incoming_msg}")
+    if DEBUG_MODE:
+        print(f"📱 WhatsApp Message from {from_number}: {incoming_msg}", flush=True)
+        sys.stdout.flush()
+    
+    if DEBUG_MODE:
+        print("=" * 50, flush=True)
+        print("🔍 DEBUG: WhatsApp Webhook Data", flush=True)
+        print(f"From: {from_number}", flush=True)
+        print(f"Body: {incoming_msg}", flush=True)
+        print(f"Media URL: {media_url}", flush=True)
+        print(f"All request data: {dict(request.values)}", flush=True)
+        print("=" * 50, flush=True)
+        sys.stdout.flush()
     
     resp = MessagingResponse()
     
@@ -66,11 +79,18 @@ def whatsapp_webhook():
         )
         
         resp.message(ai_response)
+        
+        if DEBUG_MODE:
+            print(f"🤖 Bot Response: {ai_response}", flush=True)
+            print(f"📱 Twilio Response: {str(resp)}", flush=True)
+            print("-" * 50, flush=True)
+            sys.stdout.flush()
     
     except Exception as e:
-        print(f"❌ Error en webhook: {e}")
+        print(f"❌ Error en webhook: {e}", flush=True)
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
     
     return str(resp)

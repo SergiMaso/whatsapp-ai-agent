@@ -24,3 +24,4 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 # Server Configuration
 PORT = int(os.getenv('PORT', 8080))
+DEBUG_MODE = os.getenv('DEBUG_MODE', 'false').lower() == 'true'

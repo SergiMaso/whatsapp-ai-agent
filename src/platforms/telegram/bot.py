@@ -5,6 +5,7 @@ Con soporte para botones inline (teclados)
 
 import os
 import logging
+import sys
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from dotenv import load_dotenv
@@ -23,7 +24,7 @@ from src.utils.telegram_keyboards import (
     get_lunch_times_keyboard,
     get_dinner_times_keyboard
 )
-from src.config.settings import TELEGRAM_BOT_TOKEN, OPENAI_API_KEY
+from src.config.settings import TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, DEBUG_MODE
 
 load_dotenv()
 
@@ -65,10 +66,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manejar mensajes de texto"""
+    if DEBUG_MODE:
+        print("\n🚨 TELEGRAM MESSAGE RECEIVED!", flush=True)
+        sys.stdout.flush()
+    
     user_message = update.message.text
     user_id = f"telegram:{update.effective_user.id}"
     
-    print(f"\n💬 [USUARI] {user_message}")
+    if DEBUG_MODE:
+        print(f"\n💬 [USER] {user_message}", flush=True)
+        sys.stdout.flush()
+    
+    if DEBUG_MODE:
+        print("=" * 50, flush=True)
+        print("🔍 DEBUG: Telegram Message Data", flush=True)
+        print(f"User ID: {update.effective_user.id}", flush=True)
+        print(f"Username: {update.effective_user.username}", flush=True)
+        print(f"First Name: {update.effective_user.first_name}", flush=True)
+        print(f"Message: {user_message}", flush=True)
+        print(f"Chat ID: {update.effective_chat.id}", flush=True)
+        print("=" * 50, flush=True)
+        sys.stdout.flush()
     
     # Mostrar "escribiendo..."
     await update.message.chat.send_action(action="typing")
@@ -82,7 +100,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conversation_manager
         )
         
-        print(f"🤖 [BOT] {response}")
+        if DEBUG_MODE:
+            print(f"🤖 [BOT] {response}")
+            print(f"📱 Telegram Response sent to chat {update.effective_chat.id}")
+            print("-" * 50)
         
         # Detectar si debemos mostrar botones de hora
         language = detect_language(user_message)
@@ -280,9 +301,12 @@ def main():
         print("❌ ERROR: TELEGRAM_BOT_TOKEN no configurado")
         return
     
-    print("✅ Bot de Telegram inicializado")
+    print("✅ Telegram Bot initialized")
+    print(f"🔍 DEBUG_MODE: {DEBUG_MODE}")
+    print(f"🔑 Bot Token: {TELEGRAM_BOT_TOKEN[:10]}...")
     print("="*60)
-    print("📱 LOGS DE CONVERSA ACTIVATS")
+    print("📱 CONVERSATION LOGS ACTIVE")
+    print("📱 Send a message to the bot to test!")
     print("="*60)
     
     # Crear aplicación
@@ -296,7 +320,11 @@ def main():
     application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
     
     # Iniciar bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("🚀 Starting Telegram polling...")
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        print(f"❌ Telegram polling error: {e}")
 
 if __name__ == '__main__':
     main()

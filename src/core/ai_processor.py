@@ -9,7 +9,7 @@ import re
 from unidecode import unidecode
 from src.config.settings import (
     OPENAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, 
-    AWS_SESSION_TOKEN, AWS_REGION, AI_PROVIDER
+    AWS_SESSION_TOKEN, AWS_REGION, AI_PROVIDER, DEBUG_MODE
 )
 load_dotenv()
 
@@ -114,6 +114,14 @@ def call_bedrock_claude(messages, tools):
                     "content": msg['content']
                 })
         
+        # Ensure first message is from user (Claude requirement)
+        if claude_messages and claude_messages[0]['role'] != 'user':
+            # If first message is not from user, prepend a dummy user message
+            claude_messages.insert(0, {
+                "role": "user",
+                "content": "Hello"
+            })
+        
         # Convert tools to Claude format
         claude_tools = []
         for tool in tools:
@@ -189,7 +197,8 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     elif phone.startswith('telegram:'):
         phone = phone.replace('telegram:', '')
     
-    print(f"📝 Missatge rebut: '{message}'")
+    if DEBUG_MODE:
+        print(f"📝 Missatge rebut: '{message}'")
 
     # --- STEP 1: Gestió de l'idioma ---
     saved_language = appointment_manager.get_customer_language(phone)
@@ -197,27 +206,33 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
 
     if saved_language:
         language = saved_language
-        print(f"🌍 Client conegut - Idioma mantingut: {language}")
+        if DEBUG_MODE:
+            print(f"🌍 Client conegut - Idioma mantingut: {language}")
     else:
         if message_count == 0:
             language = detect_language(message)
             appointment_manager.save_customer_language(phone, language)
-            print(f"👋 Primer missatge → Idioma detectat i guardat: {language}")
+            if DEBUG_MODE:
+                print(f"👋 Primer missatge → Idioma detectat i guardat: {language}")
         elif message_count == 1:
             new_language = detect_language(message)
             old_language = appointment_manager.get_customer_language(phone)
             if new_language != old_language:
                 appointment_manager.save_customer_language(phone, new_language)
                 language = new_language
-                print(f"🔄 Segon missatge → idioma actualitzat: {old_language} → {new_language}")
+                if DEBUG_MODE:
+                    print(f"🔄 Segon missatge → idioma actualitzat: {old_language} → {new_language}")
             else:
                 language = old_language
-                print(f"✅ Segon missatge → idioma mantingut: {language}")
+                if DEBUG_MODE:
+                    print(f"✅ Segon missatge → idioma mantingut: {language}")
         else:
             language = appointment_manager.get_customer_language(phone)
-            print(f"📌 Tercer missatge o més → idioma fix: {language}")
+            if DEBUG_MODE:
+                print(f"📌 Tercer missatge o més → idioma fix: {language}")
 
-    print(f"✅ Idioma final: {language}")
+    if DEBUG_MODE:
+        print(f"✅ Idioma final: {language}")
 
     # --- STEP 2: Obtenir info del client i reserves ---
     customer_name = appointment_manager.get_customer_name(phone)
@@ -611,7 +626,8 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
             else:
                 assistant_reply = message_response.content
         
-        print(f"📝 DEBUG: Guardando en historial...")
+        if DEBUG_MODE:
+            print(f"📝 DEBUG: Guardando en historial...")
         
         # STEP 7: Detectar si l'usuari està responent amb notes després de confirmar reserva
         if history:
@@ -655,7 +671,8 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
-        print(f"📝 DEBUG: Historial guardado correctamente")
+        if DEBUG_MODE:
+            print(f"📝 DEBUG: Historial guardado correctamente")
         
         return assistant_reply
     

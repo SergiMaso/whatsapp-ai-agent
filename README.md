@@ -33,7 +33,12 @@ Once Docker is running:
 
 **🔍 Logs:**
 ```bash
+# View all logs
 docker-compose logs -f
+
+# Enable debug mode for detailed interaction logs
+# Add to .env: DEBUG_MODE=true
+# Then restart: docker-compose up --build
 ```
 
 **🧪 Test Mode:**
@@ -264,6 +269,7 @@ DATABASE_URL=postgresql://postgres:password@host:5432/database
 ### ⚙️ Optional
 ```bash
 PORT=8080  # Server port (default 8080)
+DEBUG_MODE=true  # Enable detailed logging (default false)
 ```
 
 ---

@@ -15,6 +15,7 @@ from src.config.settings import PORT, AI_PROVIDER
 def run_flask():
     """Run Flask server (WhatsApp)"""
     print(f"🌐 Flask (WhatsApp) listening on port {PORT}")
+    # Flask debug mode doesn't work in threads, so always use debug=False
     app.run(host='0.0.0.0', port=PORT, debug=False)
 
 def run_telegram():
