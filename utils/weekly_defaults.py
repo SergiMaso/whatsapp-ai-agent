@@ -35,10 +35,10 @@ class WeeklyDefaultsManager:
                             day_of_week INTEGER UNIQUE NOT NULL,
                             day_name VARCHAR(20) NOT NULL,
                             status VARCHAR(20) NOT NULL DEFAULT 'full_day',
-                            lunch_start TIME DEFAULT TIME '12:00:00',
-                            lunch_end TIME DEFAULT TIME '15:00:00',
-                            dinner_start TIME DEFAULT TIME '19:00:00',
-                            dinner_end TIME DEFAULT TIME '22:30:00',
+                            lunch_start TIME DEFAULT '12:00:00',
+                            lunch_end TIME DEFAULT '15:00:00',
+                            dinner_start TIME DEFAULT '19:00:00',
+                            dinner_end TIME DEFAULT '22:30:00',
                             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                             updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                         )
