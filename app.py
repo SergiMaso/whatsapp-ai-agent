@@ -356,7 +356,7 @@ def get_tables():
 
 @app.route('/api/tables', methods=['POST'])
 def create_table():
-    """Crear nova taula"""
+    """Crear nova taula amb pairing bidireccional"""
     try:
         data = request.json
         
@@ -385,6 +385,22 @@ def create_table():
         
         new_id = cursor.fetchone()[0]
         
+        # GESTIÓ BIDIRECCIONAL: afegir aquesta taula al pairing de les altres
+        if pairing:
+            for table_num in pairing:
+                cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
+                target = cursor.fetchone()
+                if target:
+                    target_id = target[0]
+                    target_pairing = list(target[1]) if target[1] else []
+                    
+                    if data['table_number'] not in target_pairing:
+                        target_pairing.append(data['table_number'])
+                        cursor.execute(
+                            "UPDATE tables SET pairing = %s WHERE id = %s",
+                            (target_pairing, target_id)
+                        )
+        
         conn.commit()
         cursor.close()
         conn.close()
@@ -393,18 +409,32 @@ def create_table():
     
     except Exception as e:
         print(f"❌ Error creant taula: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/tables/<int:table_id>', methods=['PUT'])
 def update_table(table_id):
-    """Actualitzar paràmetres d'una taula"""
+    """Actualitzar paràmetres d'una taula amb pairing bidireccional"""
     try:
         data = request.json
         
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
+        # Obtenir pairing actual abans de l'actualització
+        cursor.execute("SELECT pairing, table_number FROM tables WHERE id = %s", (table_id,))
+        result = cursor.fetchone()
+        if not result:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Taula no trobada'}), 404
+        
+        old_pairing = result[0] if result[0] else []
+        current_table_number = result[1]
+        
+        # Construir query dinàmica
         updates = []
         values = []
         
@@ -417,6 +447,8 @@ def update_table(table_id):
                 return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
             updates.append("table_number = %s")
             values.append(data['table_number'])
+            # Si canviem el número, actualitzar referències
+            current_table_number = data['table_number']
         
         if 'capacity' in data:
             updates.append("capacity = %s")
@@ -426,13 +458,15 @@ def update_table(table_id):
             if data['status'] not in ['available', 'unavailable']:
                 cursor.close()
                 conn.close()
-                return jsonify({'error': 'Status invàlid. Usa: available, unavailable'}), 400
+                return jsonify({'error': 'Status invàlid'}), 400
             updates.append("status = %s")
             values.append(data['status'])
         
+        new_pairing = None
         if 'pairing' in data:
+            new_pairing = data['pairing']
             updates.append("pairing = %s")
-            values.append(data['pairing'])
+            values.append(new_pairing)
         
         if not updates:
             cursor.close()
@@ -444,10 +478,45 @@ def update_table(table_id):
         
         cursor.execute(query, values)
         
-        if cursor.rowcount == 0:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Taula no trobada'}), 404
+        # GESTIÓ BIDIRECCIONAL DEL PAIRING
+        if 'pairing' in data:
+            new_pairing_set = set(new_pairing) if new_pairing else set()
+            old_pairing_set = set(old_pairing)
+            
+            # Taules afegides al pairing
+            added = new_pairing_set - old_pairing_set
+            # Taules eliminades del pairing
+            removed = old_pairing_set - new_pairing_set
+            
+            # AFEGIR aquesta taula al pairing de les taules noves
+            for table_num in added:
+                cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
+                target = cursor.fetchone()
+                if target:
+                    target_id = target[0]
+                    target_pairing = list(target[1]) if target[1] else []
+                    
+                    if current_table_number not in target_pairing:
+                        target_pairing.append(current_table_number)
+                        cursor.execute(
+                            "UPDATE tables SET pairing = %s WHERE id = %s",
+                            (target_pairing, target_id)
+                        )
+            
+            # ELIMINAR aquesta taula del pairing de les taules que ja no estan
+            for table_num in removed:
+                cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
+                target = cursor.fetchone()
+                if target:
+                    target_id = target[0]
+                    target_pairing = list(target[1]) if target[1] else []
+                    
+                    if current_table_number in target_pairing:
+                        target_pairing.remove(current_table_number)
+                        cursor.execute(
+                            "UPDATE tables SET pairing = %s WHERE id = %s",
+                            (target_pairing if target_pairing else None, target_id)
+                        )
         
         conn.commit()
         cursor.close()
@@ -457,16 +526,29 @@ def update_table(table_id):
     
     except Exception as e:
         print(f"❌ Error actualitzant taula: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-    
 
 @app.route('/api/tables/<int:table_id>', methods=['DELETE'])
 def delete_table(table_id):
-    """Eliminar una taula (només si no té reserves futures)"""
+    """Eliminar una taula i netejar pairing bidireccional"""
     try:
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
+        # Obtenir info de la taula
+        cursor.execute("SELECT table_number, pairing FROM tables WHERE id = %s", (table_id,))
+        result = cursor.fetchone()
+        if not result:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Taula no trobada'}), 404
+        
+        table_number = result[0]
+        pairing = result[1] if result[1] else []
+        
+        # Verificar reserves futures
         cursor.execute("""
             SELECT COUNT(*) FROM appointments
             WHERE table_id = %s AND status = 'confirmed' AND date >= CURRENT_DATE
@@ -479,12 +561,35 @@ def delete_table(table_id):
             conn.close()
             return jsonify({'error': f'No es pot eliminar. La taula té {count} reserves futures'}), 409
         
-        cursor.execute("DELETE FROM tables WHERE id = %s", (table_id,))
+        # ELIMINAR referències d'aquesta taula en el pairing d'altres taules
+        for paired_table_num in pairing:
+            cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (paired_table_num,))
+            target = cursor.fetchone()
+            if target:
+                target_id = target[0]
+                target_pairing = list(target[1]) if target[1] else []
+                
+                if table_number in target_pairing:
+                    target_pairing.remove(table_number)
+                    cursor.execute(
+                        "UPDATE tables SET pairing = %s WHERE id = %s",
+                        (target_pairing if target_pairing else None, target_id)
+                    )
         
-        if cursor.rowcount == 0:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Taula no trobada'}), 404
+        # Ara també eliminar aquesta taula de qualsevol altre pairing que la referencii
+        cursor.execute("SELECT id, table_number, pairing FROM tables WHERE pairing @> ARRAY[%s]::integer[]", (table_number,))
+        for row in cursor.fetchall():
+            other_id = row[0]
+            other_pairing = list(row[2]) if row[2] else []
+            if table_number in other_pairing:
+                other_pairing.remove(table_number)
+                cursor.execute(
+                    "UPDATE tables SET pairing = %s WHERE id = %s",
+                    (other_pairing if other_pairing else None, other_id)
+                )
+        
+        # Eliminar la taula
+        cursor.execute("DELETE FROM tables WHERE id = %s", (table_id,))
         
         conn.commit()
         cursor.close()
@@ -494,6 +599,8 @@ def delete_table(table_id):
     
     except Exception as e:
         print(f"❌ Error eliminant taula: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
     
 
