@@ -8,8 +8,10 @@ from utils.transcription import transcribe_audio
 from utils.appointments import AppointmentManager, ConversationManager
 from utils.ai_processor import process_message_with_ai
 from utils.weekly_defaults import WeeklyDefaultsManager
+from utils.media_manager import MediaManager
 import base64
 from datetime import datetime
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
@@ -30,6 +32,21 @@ else:
 appointment_manager = AppointmentManager()
 conversation_manager = ConversationManager()
 weekly_defaults_manager = WeeklyDefaultsManager()
+media_manager = MediaManager()
+
+# Configuració per pujada d'arxius
+UPLOAD_FOLDER = '/tmp/uploads'
+ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @app.route('/')
 def home():
