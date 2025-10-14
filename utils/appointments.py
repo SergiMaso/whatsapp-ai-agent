@@ -237,20 +237,23 @@ class AppointmentManager:
             
             occupied_ids = [row[0] for row in cursor.fetchall()]
             
-            # Obtenir totes les taules disponibles
+            # Obtenir totes les taules disponibles, PRIORITZANT les que NO tenen pairing
             cursor.execute("""
                 SELECT id, table_number, capacity, pairing FROM tables 
                 WHERE status = 'available' AND id NOT IN %s
-                ORDER BY capacity DESC, table_number
+                ORDER BY 
+                    CASE WHEN pairing IS NULL THEN 0 ELSE 1 END,
+                    capacity DESC, 
+                    table_number
             """, (tuple(occupied_ids) if occupied_ids else (0,),))
             
             available_tables = cursor.fetchall()
             cursor.close()
             conn.close()
             
-            # 1. Intentar trobar una sola taula amb capacitat suficient
+            # 1. Intentar trobar una sola taula SENSE PAIRING amb capacitat suficient
             for table in available_tables:
-                if table[2] >= num_people:  # capacity
+                if table[3] is None and table[2] >= num_people:  # sense pairing i capacitat OK
                     return {
                         'tables': [{
                             'id': table[0],
@@ -260,7 +263,19 @@ class AppointmentManager:
                         'total_capacity': table[2]
                     }
             
-            # 2. Intentar combinar taules amb pairing
+            # 2. Si no hi ha taules sense pairing, buscar taules AMB PAIRING
+            for table in available_tables:
+                if table[3] is not None and table[2] >= num_people:  # amb pairing i capacitat OK
+                    return {
+                        'tables': [{
+                            'id': table[0],
+                            'number': table[1],
+                            'capacity': table[2]
+                        }],
+                        'total_capacity': table[2]
+                    }
+            
+            # 3. Intentar combinar taules amb pairing
             for table in available_tables:
                 table_id, table_num, capacity, pairing = table
                 
