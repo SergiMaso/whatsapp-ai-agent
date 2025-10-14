@@ -296,7 +296,10 @@ def main():
     application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
     
     # Iniciar bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling()
+    except telegram.error.Conflict:
+        print("⚠️ Un altre procés del bot està actiu. Esperant...")
 
 if __name__ == '__main__':
     main()
