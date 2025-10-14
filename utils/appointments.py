@@ -237,23 +237,30 @@ class AppointmentManager:
             
             occupied_ids = [row[0] for row in cursor.fetchall()]
             
-            # Obtenir totes les taules disponibles, PRIORITZANT les que NO tenen pairing
+            # Obtenir taules SENSE PAIRING
             cursor.execute("""
                 SELECT id, table_number, capacity, pairing FROM tables 
-                WHERE status = 'available' AND id NOT IN %s
-                ORDER BY 
-                    CASE WHEN pairing IS NULL THEN 0 ELSE 1 END,
-                    capacity DESC, 
-                    table_number
+                WHERE status = 'available' AND id NOT IN %s AND pairing IS NULL
+                ORDER BY capacity ASC, table_number
             """, (tuple(occupied_ids) if occupied_ids else (0,),))
             
-            available_tables = cursor.fetchall()
+            tables_no_pairing = cursor.fetchall()
+            
+            # Obtenir taules AMB PAIRING
+            cursor.execute("""
+                SELECT id, table_number, capacity, pairing FROM tables 
+                WHERE status = 'available' AND id NOT IN %s AND pairing IS NOT NULL
+                ORDER BY capacity ASC, table_number
+            """, (tuple(occupied_ids) if occupied_ids else (0,),))
+            
+            tables_with_pairing = cursor.fetchall()
+            
             cursor.close()
             conn.close()
             
-            # 1. Intentar trobar una sola taula SENSE PAIRING amb capacitat suficient
-            for table in available_tables:
-                if table[3] is None and table[2] >= num_people:  # sense pairing i capacitat OK
+            # 1. PRIORITAT MÀXIMA: Taula SENSE PAIRING amb capacitat EXACTA
+            for table in tables_no_pairing:
+                if table[2] == num_people:
                     return {
                         'tables': [{
                             'id': table[0],
@@ -263,9 +270,9 @@ class AppointmentManager:
                         'total_capacity': table[2]
                     }
             
-            # 2. Si no hi ha taules sense pairing, buscar taules AMB PAIRING
-            for table in available_tables:
-                if table[3] is not None and table[2] >= num_people:  # amb pairing i capacitat OK
+            # 2. Taula SENSE PAIRING amb capacitat mínima suficient (la més petita possible)
+            for table in tables_no_pairing:
+                if table[2] >= num_people:
                     return {
                         'tables': [{
                             'id': table[0],
@@ -275,8 +282,33 @@ class AppointmentManager:
                         'total_capacity': table[2]
                     }
             
-            # 3. Intentar combinar taules amb pairing
-            for table in available_tables:
+            # 3. Taula AMB PAIRING amb capacitat EXACTA
+            for table in tables_with_pairing:
+                if table[2] == num_people:
+                    return {
+                        'tables': [{
+                            'id': table[0],
+                            'number': table[1],
+                            'capacity': table[2]
+                        }],
+                        'total_capacity': table[2]
+                    }
+            
+            # 4. Taula AMB PAIRING amb capacitat mínima suficient
+            for table in tables_with_pairing:
+                if table[2] >= num_people:
+                    return {
+                        'tables': [{
+                            'id': table[0],
+                            'number': table[1],
+                            'capacity': table[2]
+                        }],
+                        'total_capacity': table[2]
+                    }
+            
+            # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
+            all_tables = tables_no_pairing + tables_with_pairing
+            for table in all_tables:
                 table_id, table_num, capacity, pairing = table
                 
                 if not pairing:
@@ -289,7 +321,7 @@ class AppointmentManager:
                 for paired_num in pairing:
                     # Buscar si la taula paired està disponible
                     paired_table = next(
-                        (t for t in available_tables if t[1] == paired_num),
+                        (t for t in all_tables if t[1] == paired_num),
                         None
                     )
                     
@@ -312,7 +344,7 @@ class AppointmentManager:
                                 'total_capacity': total_cap
                             }
             
-            # 3. No s'ha trobat combinació vàlida
+            # No s'ha trobat cap taula disponible
             return None
             
         except Exception as e:
