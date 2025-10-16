@@ -7,6 +7,7 @@ from datetime import datetime
 import re
 from unidecode import unidecode
 from utils.appointments import AppointmentManager, ConversationManager
+from utils.media_manager import MediaManager
 load_dotenv()
 
 def detect_language(text):
@@ -180,7 +181,8 @@ FUNCIONS DISPONIBLES:
 2. update_appointment – Modificar reserva existent
 3. list_appointments – Veure reserves de l’usuari
 4. cancel_appointment – Cancel·lar reserva existent
-5. save_customer_language – Guardar idioma i nom del client
+5. get_carta – Enviar la carta del restaurant quan el client la demani
+6. save_customer_language – Guardar idioma i nom del client
 
 PROCÉS DE RESERVA:
 
@@ -191,6 +193,8 @@ PROCÉS DE RESERVA:
    * Pregunta per la data, hora i número de persones.
    * Si ja saps el nom, confirma les dades i crida create_appointment.
    * Si no saps el nom, pregunta per ell. Guarda només noms vàlids i després confirma les dades amb create_appointment.
+   
+   
 4. Si vol modificar una reserva: pregunta la nova data, hora i número de persones, confirma els detalls i crida update_appointment.
 5. Si vol cancel·lar una reserva: mostra les reserves amb list_appointments, pregunta quina vol cancel·lar i crida cancel_appointment.
 6. Si vol consultar informació sobre la seva reserva (hora, data, persones), mostra la informació de les reserves actives amb list_appointments.
@@ -226,7 +230,8 @@ FUNCIONES DISPONIBLES:
 2. update_appointment – Modificar reserva existente
 3. list_appointments – Ver reservas del usuario
 4. cancel_appointment – Cancelar reserva existente
-5. save_customer_language – Guardar idioma y nombre del cliente
+5. get_carta – Enviar la carta del restaurante cuando el cliente la pida
+6. save_customer_language – Guardar idioma y nombre del cliente
 
 PROCESO DE RESERVA:
 
@@ -267,7 +272,8 @@ AVAILABLE FUNCTIONS:
 2. update_appointment – Modify an existing reservation
 3. list_appointments – View user reservations
 4. cancel_appointment – Cancel an existing reservation
-5. save_customer_language – Save the customer’s language and name
+5. get_carta – Send the restaurant menu when requested by the customer
+6. save_customer_language – Save the customer’s language and name
 
 RESERVATION PROCESS:
 
@@ -356,6 +362,18 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                             "required": ["appointment_id"]
                         }
                     }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_carta",
+                        "description": "Obtenir la carta/menú permanent del restaurant per enviar al client quan la demani. Usa això quan el client demani veure la carta, el menú, els plats disponibles, o pregunti què serviu.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                    }
                 }
             ]
         )
@@ -394,13 +412,13 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 if result:
                     table_info = result['table']
                     
-                    # Missatges segons idioma amb pregunta per notes
+                    # Missatges segons idioma amb pregunta per notes I oferta de carta
                     if language == 'ca':
-                        confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)"
+                        confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)\n📋 Vols que t'enviï la nostra carta/menú?"
                     elif language == 'en':
-                        confirmation = f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!\n\n📝 Any special requests? (high chair, allergies, preferences...)"
+                        confirmation = f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!\n\n📝 Any special requests? (high chair, allergies, preferences...)\n📋 Would you like me to send you our menu/daily?"
                     else:
-                        confirmation = f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!\n\n📝 ¿Alguna observación especial? (trona, alergias, preferencias...)"
+                        confirmation = f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!\n\n📝 ¿Alguna observación especial? (trona, alergias, preferencias...)\n📋 ¿Quieres que te envíe nuestra carta/menú?"
                     
                     assistant_reply = confirmation
                     
@@ -486,6 +504,26 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         'en': "❌ Could not cancel the reservation."
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
+            
+            elif function_name == "get_carta":
+                # Obtenir la carta del restaurant des de MediaManager
+                media_manager = MediaManager()
+                carta = media_manager.get_menu_carta()
+                
+                if carta:
+                    carta_msgs = {
+                        'ca': f"📝 Aquí tens la nostra carta:\n\n🔗 {carta['url']}\n\nQue gaudeixis del menú!",
+                        'es': f"📝 Aquí tienes nuestra carta:\n\n🔗 {carta['url']}\n\n¡Que disfrutes del menú!",
+                        'en': f"📝 Here's our menu:\n\n🔗 {carta['url']}\n\nEnjoy!"
+                    }
+                    assistant_reply = carta_msgs.get(language, carta_msgs['es'])
+                else:
+                    no_carta_msgs = {
+                        'ca': "Ho sento, ara mateix no tinc la carta disponible. Pots consultar-la al restaurant o trucar-nos per més informació.",
+                        'es': "Lo siento, ahora mismo no tengo la carta disponible. Puedes consultarla en el restaurante o llamarnos para más información.",
+                        'en': "Sorry, I don't have the menu available right now. You can check it at the restaurant or call us for more information."
+                    }
+                    assistant_reply = no_carta_msgs.get(language, no_carta_msgs['es'])
         else:
             assistant_reply = message_response.content
         
