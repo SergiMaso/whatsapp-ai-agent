@@ -546,7 +546,6 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     
                     # Si tenim data de reserva, usar el dia de la setmana de la reserva
                     if reservation_date:
-                        from datetime import datetime
                         if isinstance(reservation_date, str):
                             date_obj = datetime.strptime(reservation_date, '%Y-%m-%d')
                         else:
