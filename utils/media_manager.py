@@ -82,7 +82,7 @@ class MediaManager:
         
         Args:
             file_path: Ruta al arxiu local
-            media_type: 'menu_dia', 'menu_carta', 'promocio', 'event'
+            media_type: 'menu_dia', 'carta', 'promocio', 'event'
             title: Títol del document
             description: Descripció opcional
             date: Data associada (per menús del dia)
@@ -106,13 +106,14 @@ class MediaManager:
             
             print(f"📤 Pujant {file_type} a Cloudinary...")
             
-            # Pujar a Cloudinary
+            # Pujar a Cloudinary amb accés públic
             upload_result = cloudinary.uploader.upload(
                 file_path,
                 folder=f"restaurant/{media_type}",
                 resource_type=resource_type,
                 use_filename=True,
-                unique_filename=True
+                unique_filename=True,
+                access_mode='public'  # ✅ Fer el PDF públic per poder-lo obrir
             )
             
             file_url = upload_result['secure_url']
@@ -243,27 +244,63 @@ class MediaManager:
             print(f"❌ Error obtenint media: {e}")
             return []
     
-    def get_latest_menu(self):
-        """Obtenir el menú del dia més recent"""
+    def get_menu(self, menu_type=None, day_name=None):
+        """
+        Obtenir menú segons tipus i dia (funció intel·ligent)
+        
+        Args:
+            menu_type: 'carta' per menú permanent, 'menu_dia' per menú del dia
+            day_name: Nom del dia (dilluns, martes, monday, etc.) per menu_dia
+        
+        Returns:
+            dict amb info del menú o None
+        """
         try:
-            today = datetime.now().date()
-            
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                SELECT id, title, description, file_url, file_type
-                FROM restaurant_media
-                WHERE type = 'menu_dia' AND active = TRUE AND date = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (today,))
+            if menu_type == 'carta':
+                # Buscar carta permanent
+                print(f"🔍 Buscant carta permanent...")
+                cursor.execute("""
+                    SELECT id, title, description, file_url, file_type
+                    FROM restaurant_media
+                    WHERE type = 'carta' AND active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+            
+            elif menu_type == 'menu_dia' and day_name:
+                # Buscar menú del dia per nom del dia
+                day_name_lower = day_name.lower()
+                print(f"🔍 Buscant menú del dia: {day_name}")
+                cursor.execute("""
+                    SELECT id, title, description, file_url, file_type
+                    FROM restaurant_media
+                    WHERE type = 'menu_dia' 
+                    AND active = TRUE
+                    AND LOWER(title) LIKE %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (f'%{day_name_lower}%',))
+            
+            else:
+                # Si no s'especifica res, retornar carta per defecte
+                print(f"🔍 Buscant carta (per defecte)...")
+                cursor.execute("""
+                    SELECT id, title, description, file_url, file_type
+                    FROM restaurant_media
+                    WHERE type = 'carta' AND active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
             
             result = cursor.fetchone()
             cursor.close()
             conn.close()
             
             if result:
+                print(f"✅ Menú trobat: {result[1]}")
                 return {
                     'id': result[0],
                     'title': result[1],
@@ -271,44 +308,15 @@ class MediaManager:
                     'url': result[3],
                     'type': result[4]
                 }
+            else:
+                print(f"❌ Cap menú trobat per type={menu_type}, day={day_name}")
             
             return None
         
         except Exception as e:
             print(f"❌ Error obtenint menú: {e}")
-            return None
-    
-    def get_menu_carta(self):
-        """Obtenir el menú carta (permanent)"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT id, title, description, file_url, file_type
-                FROM restaurant_media
-                WHERE type = 'menu_carta' AND active = TRUE
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, )
-            
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            
-            if result:
-                return {
-                    'id': result[0],
-                    'title': result[1],
-                    'description': result[2],
-                    'url': result[3],
-                    'type': result[4]
-                }
-            
-            return None
-        
-        except Exception as e:
-            print(f"❌ Error obtenint carta: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def deactivate_media(self, media_id):

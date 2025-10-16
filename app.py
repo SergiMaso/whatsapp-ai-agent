@@ -921,32 +921,12 @@ def get_media_api():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/media/latest-menu', methods=['GET'])
-def get_latest_menu_api():
-    """Obtenir el menú del dia més recent"""
-    print("🔍 [MEDIA] GET /api/media/latest-menu - Rebuda petició")
-    try:
-        menu = media_manager.get_latest_menu()
-        
-        if menu:
-            print(f"✅ [MEDIA] Menú trobat: {menu['title']}")
-            return jsonify(menu), 200
-        else:
-            print("⚠️  [MEDIA] No hi ha menú disponible per avui")
-            return jsonify({'message': 'No hi ha menú disponible per avui'}), 404
-    
-    except Exception as e:
-        print(f"❌ [MEDIA] Error obtenint menú: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/media/carta', methods=['GET'])
 def get_carta_api():
     """Obtenir la carta del restaurant"""
     print("🔍 [MEDIA] GET /api/media/carta - Rebuda petició")
     try:
-        carta = media_manager.get_menu_carta()
+        carta = media_manager.get_menu(menu_type='carta')
         
         if carta:
             print(f"✅ [MEDIA] Carta trobada: {carta['title']}")
@@ -998,7 +978,7 @@ def upload_media_api():
             print("❌ [MEDIA] Falten camps obligatoris")
             return jsonify({'error': 'Els camps type i title són obligatoris'}), 400
         
-        valid_types = ['menu_dia', 'menu_carta', 'promocio', 'event']
+        valid_types = ['menu_dia', 'carta', 'promocio', 'event']
         if media_type not in valid_types:
             print(f"❌ [MEDIA] Tipus invàlid: {media_type}")
             return jsonify({'error': f'Tipus invàlid. Usa: {", ".join(valid_types)}'}), 400

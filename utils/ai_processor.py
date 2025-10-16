@@ -366,12 +366,22 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 {
                     "type": "function",
                     "function": {
-                        "name": "get_carta",
-                        "description": "Obtenir la carta/menú permanent del restaurant per enviar al client quan la demani. Usa això quan el client demani veure la carta, el menú, els plats disponibles, o pregunti què serviu.",
+                        "name": "get_menu",
+                        "description": "Obtenir carta o menú del dia segons el que demana el client. Usa 'carta' per la carta permanent. Usa 'menu_dia' amb el nom del dia (dilluns/monday/lunes, dimarts/tuesday/martes, dimecres/wednesday/miércoles, dijous/thursday/jueves, divendres/friday/viernes, dissabte/saturday/sábado, diumenge/sunday/domingo) per menús específics del dia.",
                         "parameters": {
                             "type": "object",
-                            "properties": {},
-                            "required": []
+                            "properties": {
+                                "menu_type": {
+                                    "type": "string",
+                                    "enum": ["carta", "menu_dia"],
+                                    "description": "Tipus de menú: 'carta' per carta permanent, 'menu_dia' per menú del dia"
+                                },
+                                "day_name": {
+                                    "type": "string",
+                                    "description": "Nom del dia en qualsevol idioma (dilluns, lunes, monday, dimarts, martes, tuesday, etc.). Només per menu_dia. Si demanen 'avui' o 'demà', calcula el dia de la setmana corresponent."
+                                }
+                            },
+                            "required": ["menu_type"]
                         }
                     }
                 }
@@ -412,19 +422,19 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 if result:
                     table_info = result['table']
                     
-                    # Missatges segons idioma amb pregunta per notes I oferta de carta
+                    # Missatges segons idioma amb pregunta NOMÉS per observacions
                     if language == 'ca':
-                        confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)\n📋 Vols que t'enviï la nostra carta/menú?"
+                        confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)"
                     elif language == 'en':
-                        confirmation = f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!\n\n📝 Any special requests? (high chair, allergies, preferences...)\n📋 Would you like me to send you our menu/daily?"
+                        confirmation = f"✅ Reservation confirmed!\n\n👤 Name: {function_args['client_name']}\n👥 People: {num_people}\n📅 Date: {function_args['date']}\n🕐 Time: {function_args['time']}\n🪑 Table: {table_info['number']} (capacity {table_info['capacity']})\n\nSee you soon!\n\n📝 Any special requests? (high chair, allergies, preferences...)"
                     else:
-                        confirmation = f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!\n\n📝 ¿Alguna observación especial? (trona, alergias, preferencias...)\n📋 ¿Quieres que te envíe nuestra carta/menú?"
+                        confirmation = f"✅ ¡Reserva confirmada!\n\n👤 Nombre: {function_args['client_name']}\n👥 Personas: {num_people}\n📅 Fecha: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Mesa: {table_info['number']} (capacidad {table_info['capacity']})\n\n¡Te esperamos!\n\n📝 ¿Alguna observación especial? (trona, alergias, preferencias...)"
                     
                     assistant_reply = confirmation
                     
-                    # Guardar ID de la reserva creada per afegir notes després
-                    conversation_manager.save_message(phone, "system", f"LAST_APPOINTMENT_ID:{result['id']}")
-                    # No netejar historial perè poden afegir notes
+                    # Guardar estat esperant observacions
+                    conversation_manager.save_message(phone, "system", f"WAITING_NOTES:{result['id']}")
+                    # No netejar historial perquè poden afegir notes
                 else:
                     no_tables_msgs = {
                         'es': f"Lo siento, no hay mesas disponibles para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¿Prefieres otro horario?",
@@ -505,68 +515,151 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
             
-            elif function_name == "get_carta":
-                # Obtenir la carta del restaurant des de MediaManager
+            elif function_name == "get_menu":
+                # Obtenir menú del restaurant (carta o menú del dia)
                 media_manager = MediaManager()
-                carta = media_manager.get_menu_carta()
+                menu_type = function_args.get('menu_type', 'carta')
+                day_name = function_args.get('day_name')
                 
-                if carta:
-                    carta_msgs = {
-                        'ca': f"📝 Aquí tens la nostra carta:\n\n🔗 {carta['url']}\n\nQue gaudeixis del menú!",
-                        'es': f"📝 Aquí tienes nuestra carta:\n\n🔗 {carta['url']}\n\n¡Que disfrutes del menú!",
-                        'en': f"📝 Here's our menu:\n\n🔗 {carta['url']}\n\nEnjoy!"
+                # Si demanen menú del dia sense especificar dia, usar el dia de la reserva
+                if menu_type == 'menu_dia' and not day_name:
+                    # Buscar si hi ha una reserva en estat WAITING_MENU
+                    reservation_date = None
+                    for msg in reversed(history):
+                        if msg['role'] == 'system' and msg['content'].startswith('WAITING_MENU:'):
+                            appointment_id = int(msg['content'].split(':')[1])
+                            # Obtenir la data de la reserva
+                            apt = appointment_manager.get_appointment_by_id(phone, appointment_id)
+                            if apt:
+                                reservation_date = apt['date']
+                            break
+                    
+                    day_names_map = {
+                        0: ['dilluns', 'lunes', 'monday'],
+                        1: ['dimarts', 'martes', 'tuesday'],
+                        2: ['dimecres', 'miércoles', 'wednesday'],
+                        3: ['dijous', 'jueves', 'thursday'],
+                        4: ['divendres', 'viernes', 'friday'],
+                        5: ['dissabte', 'sábado', 'saturday'],
+                        6: ['diumenge', 'domingo', 'sunday']
                     }
-                    assistant_reply = carta_msgs.get(language, carta_msgs['es'])
+                    
+                    # Si tenim data de reserva, usar el dia de la setmana de la reserva
+                    if reservation_date:
+                        from datetime import datetime
+                        if isinstance(reservation_date, str):
+                            date_obj = datetime.strptime(reservation_date, '%Y-%m-%d')
+                        else:
+                            date_obj = reservation_date
+                        reservation_day_num = date_obj.weekday()
+                        # Usar el nom del dia segons l'idioma del client
+                        if language == 'ca':
+                            day_name = day_names_map[reservation_day_num][0]
+                        elif language == 'es':
+                            day_name = day_names_map[reservation_day_num][1]
+                        else:
+                            day_name = day_names_map[reservation_day_num][2]
+                        print(f"📅 Usant dia de la reserva: {reservation_date} -> {day_name}")
+                    else:
+                        # Si no hi ha reserva, usar el dia d'avui
+                        today_num = datetime.now().weekday()
+                        if language == 'ca':
+                            day_name = day_names_map[today_num][0]
+                        elif language == 'es':
+                            day_name = day_names_map[today_num][1]
+                        else:
+                            day_name = day_names_map[today_num][2]
+                        print(f"📅 Usant dia d'avui: {day_name}")
+                
+                menu = media_manager.get_menu(menu_type, day_name)
+                
+                if menu:
+                    if menu_type == 'carta':
+                        menu_msgs = {
+                            'ca': f"📝 Aquí tens la nostra carta:\n\n🔗 {menu['url']}\n\nQue gaudeixis!",
+                            'es': f"📝 Aquí tienes nuestra carta:\n\n🔗 {menu['url']}\n\n¡Que disfrutes!",
+                            'en': f"📝 Here's our menu:\n\n🔗 {menu['url']}\n\nEnjoy!"
+                        }
+                    else:
+                        menu_msgs = {
+                            'ca': f"📝 Aquí tens el menú del dia ({day_name}):\n\n🔗 {menu['url']}\n\nQue gaudeixis!",
+                            'es': f"📝 Aquí tienes el menú del día ({day_name}):\n\n🔗 {menu['url']}\n\n¡Que disfrutes!",
+                            'en': f"📝 Here's today's menu ({day_name}):\n\n🔗 {menu['url']}\n\nEnjoy!"
+                        }
+                    assistant_reply = menu_msgs.get(language, menu_msgs['es'])
                 else:
-                    no_carta_msgs = {
-                        'ca': "Ho sento, ara mateix no tinc la carta disponible. Pots consultar-la al restaurant o trucar-nos per més informació.",
-                        'es': "Lo siento, ahora mismo no tengo la carta disponible. Puedes consultarla en el restaurante o llamarnos para más información.",
-                        'en': "Sorry, I don't have the menu available right now. You can check it at the restaurant or call us for more information."
+                    no_menu_msgs = {
+                        'ca': "Ho sento, ara mateix no tinc aquest menú disponible. Pots consultar-lo al restaurant.",
+                        'es': "Lo siento, ahora mismo no tengo ese menú disponible. Puedes consultarlo en el restaurante.",
+                        'en': "Sorry, I don't have that menu available right now. You can check it at the restaurant."
                     }
-                    assistant_reply = no_carta_msgs.get(language, no_carta_msgs['es'])
+                    assistant_reply = no_menu_msgs.get(language, no_menu_msgs['es'])
         else:
             assistant_reply = message_response.content
         
         print(f"📝 DEBUG: Guardando en historial...")
         
-        # STEP 7: Detectar si l'usuari està responent amb notes després de confirmar reserva
+        # STEP 7: Sistema d'estats per observacions i menú
         if history:
             for msg in reversed(history):
-                if msg['role'] == 'system' and msg['content'].startswith('LAST_APPOINTMENT_ID:'):
-                    # L'usuari ha confirmat una reserva recentment i ara respon
+                # === ESTAT 1: Esperant observacions ===
+                if msg['role'] == 'system' and msg['content'].startswith('WAITING_NOTES:'):
                     appointment_id = int(msg['content'].split(':')[1])
                     
-                    # Si el missatge sembla una resposta negativa
                     negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
+                    
+                    # Si respon negativament a observacions
                     if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
-                        # conversation_manager.clear_history(phone)  # SILENCIAT
+                        # Passar a preguntar pel menú
+                        conversation_manager.save_message(phone, "system", f"WAITING_MENU:{appointment_id}")
+                        menu_msgs = {
+                            'ca': '✅ Perfecte!\n\n📋 Vols que t\'enviï la carta o el menú del dia?',
+                            'es': '✅ ¡Perfecto!\n\n📋 ¿Quieres que te envíe la carta o el menú del día?',
+                            'en': '✅ Perfect!\n\n📋 Would you like me to send you the menu or today\'s specials?'
+                        }
+                        assistant_reply = menu_msgs.get(language, menu_msgs['es'])
+                    else:
+                        # Guardar notes i passar a preguntar pel menú
+                        success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
+                        if success:
+                            conversation_manager.save_message(phone, "system", f"WAITING_MENU:{appointment_id}")
+                            menu_msgs = {
+                                'ca': f'✅ Notes afegides: "{message}"\n\n📋 Vols que t\'enviï la carta o el menú del dia?',
+                                'es': f'✅ Observación añadida: "{message}"\n\n📋 ¿Quieres que te envíe la carta o el menú del día?',
+                                'en': f'✅ Note added: "{message}"\n\n📋 Would you like me to send you the menu or today\'s specials?'
+                            }
+                            assistant_reply = menu_msgs.get(language, menu_msgs['es'])
+                        else:
+                            assistant_reply = "Error afegint notes."
+                    
+                    conversation_manager.save_message(phone, "user", message)
+                    conversation_manager.save_message(phone, "assistant", assistant_reply)
+                    return assistant_reply
+                
+                # === ESTAT 2: Esperant resposta sobre menú ===
+                elif msg['role'] == 'system' and msg['content'].startswith('WAITING_MENU:'):
+                    appointment_id = int(msg['content'].split(':')[1])
+                    
+                    negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
+                    
+                    # Si respon negativament
+                    if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
                         thanks_msgs = {
-                            'ca': '✅ Perfecte! Ens veiem aviat!',
-                            'es': '✅ ¡Perfecto! ¡Nos vemos pronto!',
-                            'en': '✅ Perfect! See you soon!'
+                            'ca': '✅ Perfecte! Ens veiem aviat! 👋',
+                            'es': '✅ ¡Perfecto! ¡Nos vemos pronto! 👋',
+                            'en': '✅ Perfect! See you soon! 👋'
                         }
                         assistant_reply = thanks_msgs.get(language, thanks_msgs['es'])
-                        # Guardar missatges abans de retornar
                         conversation_manager.save_message(phone, "user", message)
                         conversation_manager.save_message(phone, "assistant", assistant_reply)
                         return assistant_reply
-                    
-                    # Afegir les notes a la reserva
-                    success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
-                    
-                    if success:
-                        # conversation_manager.clear_history(phone)  # SILENCIAT
-                        success_msgs = {
-                            'ca': f'✅ Notes afegides: "{message}"\n\nGràcies! Ens veiem aviat!',
-                            'es': f'✅ Observación añadida: "{message}"\n\n¡Gracias! ¡Nos vemos pronto!',
-                            'en': f'✅ Note added: "{message}"\n\nThank you! See you soon!'
-                        }
-                        assistant_reply = success_msgs.get(language, success_msgs['es'])
-                        # Guardar missatges abans de retornar
-                        conversation_manager.save_message(phone, "user", message)
-                        conversation_manager.save_message(phone, "assistant", assistant_reply)
-                        return assistant_reply
-                    
+                    else:
+                        # Si respon afirmativament, deixar que la IA processi amb get_menu
+                        # NO retornar aquí, continuar el flux normal
+                        break
+                
+                # Si no hi ha cap estat actiu, sortir del bucle
+                elif msg['role'] != 'system':
                     break
         
         conversation_manager.save_message(phone, "user", message)
