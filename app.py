@@ -899,101 +899,141 @@ def update_weekly_default_api(day_of_week):
 # MEDIA ENDPOINTS (PDFs, Imatges)
 # ========================================
 
+
 @app.route('/api/media', methods=['GET'])
 def get_media_api():
-    """
-    Obtenir llista de media
-    Query params: type (menu_dia, menu_carta, promocio, event), date (YYYY-MM-DD)
-    """
+    """Obtenir llista de media"""
+    print("🔍 [MEDIA] GET /api/media - Rebuda petició")
     try:
         media_type = request.args.get('type')
         date = request.args.get('date')
         
+        print(f"📋 [MEDIA] Filtres: type={media_type}, date={date}")
+        
         media_list = media_manager.get_active_media(media_type, date)
+        
+        print(f"✅ [MEDIA] Retornant {len(media_list)} arxius")
         return jsonify(media_list), 200
     
     except Exception as e:
-        print(f"❌ Error obtenint media: {e}")
+        print(f"❌ [MEDIA] Error obtenint media: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/media/latest-menu', methods=['GET'])
 def get_latest_menu_api():
     """Obtenir el menú del dia més recent"""
+    print("🔍 [MEDIA] GET /api/media/latest-menu - Rebuda petició")
     try:
         menu = media_manager.get_latest_menu()
         
         if menu:
+            print(f"✅ [MEDIA] Menú trobat: {menu['title']}")
             return jsonify(menu), 200
         else:
+            print("⚠️  [MEDIA] No hi ha menú disponible per avui")
             return jsonify({'message': 'No hi ha menú disponible per avui'}), 404
     
     except Exception as e:
-        print(f"❌ Error obtenint menú: {e}")
+        print(f"❌ [MEDIA] Error obtenint menú: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/media/carta', methods=['GET'])
 def get_carta_api():
     """Obtenir la carta del restaurant"""
+    print("🔍 [MEDIA] GET /api/media/carta - Rebuda petició")
     try:
         carta = media_manager.get_menu_carta()
         
         if carta:
+            print(f"✅ [MEDIA] Carta trobada: {carta['title']}")
             return jsonify(carta), 200
         else:
+            print("⚠️  [MEDIA] No hi ha carta disponible")
             return jsonify({'message': 'No hi ha carta disponible'}), 404
     
     except Exception as e:
-        print(f"❌ Error obtenint carta: {e}")
+        print(f"❌ [MEDIA] Error obtenint carta: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/media/upload', methods=['POST'])
 def upload_media_api():
-    """
-    Pujar un nou arxiu (PDF o imatge)
+    """Pujar un nou arxiu (PDF o imatge)"""
+    print("🔍 [MEDIA] POST /api/media/upload - Rebuda petició")
+    print(f"📦 [MEDIA] Content-Type: {request.content_type}")
+    print(f"📦 [MEDIA] Files: {list(request.files.keys())}")
+    print(f"📦 [MEDIA] Form data: {list(request.form.keys())}")
     
-    Form data:
-    - file: arxiu a pujar
-    - type: menu_dia, menu_carta, promocio, event
-    - title: títol del document
-    - description: descripció (opcional)
-    - date: data YYYY-MM-DD (opcional, per menús del dia)
-    """
     try:
         # Validar que hi ha arxiu
         if 'file' not in request.files:
+            print("❌ [MEDIA] No s'ha proporcionat cap arxiu")
             return jsonify({'error': 'No s\'ha proporcionat cap arxiu'}), 400
         
         file = request.files['file']
+        print(f"📄 [MEDIA] Arxiu rebut: {file.filename}")
         
         if file.filename == '':
+            print("❌ [MEDIA] Nom d'arxiu buit")
             return jsonify({'error': 'Nom d\'arxiu buit'}), 400
         
         if not allowed_file(file.filename):
+            print(f"❌ [MEDIA] Tipus d'arxiu no permès: {file.filename}")
             return jsonify({'error': f'Tipus d\'arxiu no permès. Usa: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        
+        print("✅ [MEDIA] Arxiu vàlid")
         
         # Validar camps obligatoris
         media_type = request.form.get('type')
         title = request.form.get('title')
         
+        print(f"📋 [MEDIA] Tipus: {media_type}, Títol: {title}")
+        
         if not media_type or not title:
+            print("❌ [MEDIA] Falten camps obligatoris")
             return jsonify({'error': 'Els camps type i title són obligatoris'}), 400
         
         valid_types = ['menu_dia', 'menu_carta', 'promocio', 'event']
         if media_type not in valid_types:
+            print(f"❌ [MEDIA] Tipus invàlid: {media_type}")
             return jsonify({'error': f'Tipus invàlid. Usa: {", ".join(valid_types)}'}), 400
         
         # Guardar arxiu temporalment
         filename = secure_filename(file.filename)
         temp_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(temp_path)
         
-        print(f"📁 Arxiu guardat temporalment: {temp_path}")
+        print(f"💾 [MEDIA] Guardant temporalment a: {temp_path}")
+        file.save(temp_path)
+        print(f"✅ [MEDIA] Arxiu guardat temporalment")
         
         # Obtenir camps opcionals
         description = request.form.get('description')
         date = request.form.get('date')
         
+        print(f"📝 [MEDIA] Descripció: {description}")
+        print(f"📅 [MEDIA] Data: {date}")
+        
+        # Comprovar variables Cloudinary
+        cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME')
+        api_key = os.getenv('CLOUDINARY_API_KEY')
+        api_secret = os.getenv('CLOUDINARY_API_SECRET')
+        
+        if not cloud_name or not api_key or not api_secret:
+            print("❌ [MEDIA] Variables Cloudinary no configurades!")
+            print(f"   CLOUDINARY_CLOUD_NAME: {'✅' if cloud_name else '❌'}")
+            print(f"   CLOUDINARY_API_KEY: {'✅' if api_key else '❌'}")
+            print(f"   CLOUDINARY_API_SECRET: {'✅' if api_secret else '❌'}")
+            return jsonify({'error': 'Cloudinary no configurat. Contacta amb l\'administrador'}), 500
+        
+        print("✅ [MEDIA] Variables Cloudinary configurades")
+        
         # Pujar a Cloudinary i guardar a BD
+        print("☁️  [MEDIA] Pujant a Cloudinary...")
         result = media_manager.upload_media(
             file_path=temp_path,
             media_type=media_type,
@@ -1005,17 +1045,21 @@ def upload_media_api():
         # Eliminar arxiu temporal
         if os.path.exists(temp_path):
             os.remove(temp_path)
+            print("🗑️  [MEDIA] Arxiu temporal eliminat")
         
         if result:
+            print(f"✅ [MEDIA] Arxiu pujat correctament! ID: {result.get('id')}")
+            print(f"🔗 [MEDIA] URL: {result.get('url')}")
             return jsonify({
                 'message': 'Arxiu pujat correctament',
                 'media': result
             }), 201
         else:
+            print("❌ [MEDIA] Error pujant l'arxiu (result=None)")
             return jsonify({'error': 'Error pujant l\'arxiu'}), 500
     
     except Exception as e:
-        print(f"❌ Error pujant media: {e}")
+        print(f"❌ [MEDIA] Error pujant media: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -1023,32 +1067,43 @@ def upload_media_api():
 @app.route('/api/media/<int:media_id>', methods=['DELETE'])
 def delete_media_api(media_id):
     """Eliminar un media (BD + Cloudinary)"""
+    print(f"🔍 [MEDIA] DELETE /api/media/{media_id} - Rebuda petició")
     try:
         success = media_manager.delete_media(media_id)
         
         if success:
+            print(f"✅ [MEDIA] Media {media_id} eliminat correctament")
             return jsonify({'message': 'Media eliminat correctament'}), 200
         else:
+            print(f"❌ [MEDIA] Error eliminant media {media_id}")
             return jsonify({'error': 'Error eliminant el media'}), 500
     
     except Exception as e:
-        print(f"❌ Error eliminant media: {e}")
+        print(f"❌ [MEDIA] Error eliminant media: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/media/<int:media_id>/deactivate', methods=['PUT'])
 def deactivate_media_api(media_id):
     """Desactivar un media (no l'elimina)"""
+    print(f"🔍 [MEDIA] PUT /api/media/{media_id}/deactivate - Rebuda petició")
     try:
         success = media_manager.deactivate_media(media_id)
         
         if success:
+            print(f"✅ [MEDIA] Media {media_id} desactivat correctament")
             return jsonify({'message': 'Media desactivat correctament'}), 200
         else:
+            print(f"❌ [MEDIA] Error desactivant media {media_id}")
             return jsonify({'error': 'Error desactivant el media'}), 500
     
     except Exception as e:
-        print(f"❌ Error desactivant media: {e}")
+        print(f"❌ [MEDIA] Error desactivant media: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
