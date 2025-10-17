@@ -1,12 +1,3 @@
-# Arxiu: ai_processor.py (VERSIÓ CORREGIDA)
-# 
-# CANVIS PRINCIPALS:
-# 1. ✅ Bloc d'estats ABANS de cridar la IA (línies 116-176)
-# 2. ✅ Millor descripció de get_menu per diferenciar carta vs menú
-# 3. ✅ Model canviat a gpt-4o-mini (línia 392)
-#
-# Reemplaça aquest arxiu a: utils/ai_processor.py
-
 import os
 import json
 from langdetect import detect, LangDetectException
@@ -334,7 +325,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=messages,
             tools=[
                 {
