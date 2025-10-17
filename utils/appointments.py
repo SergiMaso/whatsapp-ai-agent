@@ -515,7 +515,7 @@ class AppointmentManager:
                        t.table_number, t.capacity, a.status
                 FROM appointments a
                 JOIN tables t ON a.table_id = t.id
-                WHERE a.phone = %s AND a.date >= %s
+                WHERE a.phone = %s AND a.date >= %s AND a.status = 'confirmed'
                 ORDER BY a.start_time
             """, (phone, from_date))
             
