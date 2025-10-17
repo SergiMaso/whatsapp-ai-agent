@@ -4,7 +4,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-import cloudinary.api
+from cloudinary.utils import cloudinary_url
+import logging
 
 load_dotenv()
 
@@ -28,6 +29,10 @@ class MediaManager:
             api_key=os.getenv('CLOUDINARY_API_KEY'),
             api_secret=os.getenv('CLOUDINARY_API_SECRET')
         )
+
+        # Configurar logger
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
         
         self.ensure_table_exists()
     
@@ -38,63 +43,55 @@ class MediaManager:
     def ensure_table_exists(self):
         """Crear taula restaurant_media si no existeix"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS restaurant_media (
+                            id SERIAL PRIMARY KEY,
+                            type VARCHAR(50) NOT NULL,
+                            title VARCHAR(200) NOT NULL,
+                            description TEXT,
+                            file_url TEXT NOT NULL,
+                            thumbnail_url TEXT,
+                            file_type VARCHAR(20) NOT NULL,
+                            file_size INTEGER,
+                            cloudinary_public_id VARCHAR(200),
+                            active BOOLEAN DEFAULT TRUE,
+                            date DATE,
+                            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_media_type ON restaurant_media(type);
+                    """)
+                    
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_media_active ON restaurant_media(active);
+                    """)
+                    
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_media_created_at ON restaurant_media(created_at DESC);
+                    """)
             
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS restaurant_media (
-                    id SERIAL PRIMARY KEY,
-                    type VARCHAR(50) NOT NULL,
-                    title VARCHAR(200) NOT NULL,
-                    description TEXT,
-                    file_url TEXT NOT NULL,
-                    thumbnail_url TEXT,
-                    file_type VARCHAR(10) NOT NULL,
-                    file_size INTEGER,
-                    cloudinary_public_id VARCHAR(200),
-                    active BOOLEAN DEFAULT TRUE,
-                    date DATE,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Crear índexs per millorar rendiment
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_media_type ON restaurant_media(type);
-            """)
-            
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_media_active ON restaurant_media(active);
-            """)
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print("✅ Taula restaurant_media creada/verificada")
+            self.logger.info("✅ Taula restaurant_media creada/verificada")
         
         except Exception as e:
-            print(f"❌ Error creant taula restaurant_media: {e}")
+            self.logger.error(f"❌ Error creant taula restaurant_media: {e}")
     
     def upload_media(self, file_path, media_type, title, description=None, date=None):
         """
         Pujar un arxiu (PDF o imatge) a Cloudinary i guardar-lo a la BD
-        
-        Args:
-            file_path: Ruta al arxiu local
-            media_type: 'menu_dia', 'carta', 'promocio', 'event'
-            title: Títol del document
-            description: Descripció opcional
-            date: Data associada (per menús del dia)
-        
-        Returns:
-            dict amb info del media carregat
         """
         try:
+            # Validar arxiu local
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Fitxer no trobat: {file_path}")
+
             # Detectar tipus d'arxiu
             file_extension = file_path.split('.')[-1].lower()
             
-            # Determinar resource_type per Cloudinary
             if file_extension == 'pdf':
                 resource_type = 'raw'
                 file_type = 'pdf'
@@ -104,9 +101,8 @@ class MediaManager:
             else:
                 raise ValueError(f"Tipus d'arxiu no suportat: {file_extension}")
             
-            print(f"📤 Pujant {file_type} a Cloudinary...")
-            
-            # Pujar a Cloudinary amb accés públic
+            self.logger.info(f"📤 Pujant {file_type} a Cloudinary...")
+
             upload_result = cloudinary.uploader.upload(
                 file_path,
                 folder=f"restaurant/{media_type}",
@@ -114,70 +110,59 @@ class MediaManager:
                 use_filename=True,
                 unique_filename=True,
                 access_mode='public',
-                type='upload',  # ✅ Fer el PDF públic per poder-lo obrir
+                type='upload'
             )
             
-                        # Per PDFs, afegir paràmetre fl_attachment per forçar visualització al navegador
-            # if file_type == 'pdf':
-            #     # Transformar URL per obrir al navegador en lloc de descarregar
-            #     file_url = upload_result['secure_url'].replace('/upload/', '/upload/fl_attachment/')
-            # else:
-            #     file_url = upload_result['secure_url']
+            # Fer que el PDF sigui visualitzable (no descarregable)
+            if file_type == 'pdf':
+                file_url = upload_result['secure_url'].replace('/upload/', '/upload/fl_attachment:false/')
+            else:
+                file_url = upload_result['secure_url']
             
-            file_url = upload_result['secure_url']
             public_id = upload_result['public_id']
             file_size = upload_result.get('bytes', 0)
             
-            # Generar thumbnail per PDFs
+            # Generar thumbnail
             thumbnail_url = None
             if file_type == 'pdf':
-                try:
-                    # Cloudinary pot generar preview del PDF
-                    thumbnail_url = cloudinary.CloudinaryImage(public_id).image(
-                        format="jpg",
-                        page=1,
-                        width=300,
-                        crop="scale"
-                    )
-                except:
-                    thumbnail_url = None
+                thumbnail_url, _ = cloudinary_url(
+                    public_id,
+                    format="jpg",
+                    page=1,
+                    width=300,
+                    crop="scale"
+                )
             else:
-                # Per imatges, crear thumbnail
-                thumbnail_url = cloudinary.CloudinaryImage(public_id).image(
+                thumbnail_url, _ = cloudinary_url(
+                    public_id,
                     width=300,
                     height=300,
                     crop="fill"
                 )
             
-            # Guardar a la base de dades
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            # Guardar a la BD
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO restaurant_media 
+                        (type, title, description, file_url, thumbnail_url, file_type, 
+                         file_size, cloudinary_public_id, date, active)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                        RETURNING id
+                    """, (
+                        media_type,
+                        title,
+                        description,
+                        file_url,
+                        thumbnail_url,
+                        file_type,
+                        file_size,
+                        public_id,
+                        date
+                    ))
+                    media_id = cursor.fetchone()[0]
             
-            cursor.execute("""
-                INSERT INTO restaurant_media 
-                (type, title, description, file_url, thumbnail_url, file_type, 
-                 file_size, cloudinary_public_id, date, active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
-                RETURNING id
-            """, (
-                media_type,
-                title,
-                description,
-                file_url,
-                thumbnail_url,
-                file_type,
-                file_size,
-                public_id,
-                date
-            ))
-            
-            media_id = cursor.fetchone()[0]
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            print(f"✅ Media pujat correctament: ID {media_id}")
+            self.logger.info(f"✅ Media pujat correctament: ID {media_id}")
             
             return {
                 'id': media_id,
@@ -188,26 +173,12 @@ class MediaManager:
             }
         
         except Exception as e:
-            print(f"❌ Error pujant media: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.error(f"❌ Error pujant media: {e}", exc_info=True)
             return None
     
     def get_active_media(self, media_type=None, date=None):
-        """
-        Obtenir media actius
-        
-        Args:
-            media_type: Filtrar per tipus (opcional)
-            date: Filtrar per data (opcional)
-        
-        Returns:
-            Llista de diccionaris amb info dels media
-        """
+        """Obtenir media actius"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
             query = """
                 SELECT id, type, title, description, file_url, thumbnail_url, 
                        file_type, file_size, date, created_at
@@ -226,11 +197,13 @@ class MediaManager:
             
             query += " ORDER BY created_at DESC"
             
-            cursor.execute(query, params)
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, params)
+                    results = cursor.fetchall()
             
-            media_list = []
-            for row in cursor.fetchall():
-                media_list.append({
+            return [
+                {
                     'id': row[0],
                     'type': row[1],
                     'title': row[2],
@@ -241,74 +214,56 @@ class MediaManager:
                     'file_size': row[7],
                     'date': row[8].isoformat() if row[8] else None,
                     'created_at': row[9].isoformat() if row[9] else None
-                })
-            
-            cursor.close()
-            conn.close()
-            
-            return media_list
+                }
+                for row in results
+            ]
         
         except Exception as e:
-            print(f"❌ Error obtenint media: {e}")
+            self.logger.error(f"❌ Error obtenint media: {e}", exc_info=True)
             return []
     
     def get_menu(self, menu_type=None, day_name=None):
-        """
-        Obtenir menú segons tipus i dia (funció intel·ligent)
-        
-        Args:
-            menu_type: 'carta' per menú permanent, 'menu_dia' per menú del dia
-            day_name: Nom del dia (dilluns, martes, monday, etc.) per menu_dia
-        
-        Returns:
-            dict amb info del menú o None
-        """
+        """Obtenir menú segons tipus i dia"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            if menu_type == 'carta':
-                # Buscar carta permanent
-                print(f"🔍 Buscant carta permanent...")
-                cursor.execute("""
-                    SELECT id, title, description, file_url, file_type
-                    FROM restaurant_media
-                    WHERE type = 'carta' AND active = TRUE
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                """)
-            
-            elif menu_type == 'menu_dia' and day_name:
-                # Buscar menú del dia per nom del dia
-                day_name_lower = day_name.lower()
-                print(f"🔍 Buscant menú del dia: {day_name}")
-                cursor.execute("""
-                    SELECT id, title, description, file_url, file_type
-                    FROM restaurant_media
-                    WHERE type = 'menu_dia' 
-                    AND active = TRUE
-                    AND LOWER(title) LIKE %s
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                """, (f'%{day_name_lower}%',))
-            
-            else:
-                # Si no s'especifica res, retornar carta per defecte
-                print(f"🔍 Buscant carta (per defecte)...")
-                cursor.execute("""
-                    SELECT id, title, description, file_url, file_type
-                    FROM restaurant_media
-                    WHERE type = 'carta' AND active = TRUE
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                """)
-            
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    if menu_type == 'carta':
+                        self.logger.info(f"🔍 Buscant carta permanent...")
+                        cursor.execute("""
+                            SELECT id, title, description, file_url, file_type
+                            FROM restaurant_media
+                            WHERE type = 'carta' AND active = TRUE
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """)
+                    
+                    elif menu_type == 'menu_dia' and day_name:
+                        day_name_lower = day_name.lower()
+                        self.logger.info(f"🔍 Buscant menú del dia: {day_name}")
+                        cursor.execute("""
+                            SELECT id, title, description, file_url, file_type
+                            FROM restaurant_media
+                            WHERE type = 'menu_dia' 
+                            AND active = TRUE
+                            AND LOWER(title) LIKE %s
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """, (f'%{day_name_lower}%',))
+                    
+                    else:
+                        self.logger.info(f"🔍 Buscant carta (per defecte)...")
+                        cursor.execute("""
+                            SELECT id, title, description, file_url, file_type
+                            FROM restaurant_media
+                            WHERE type = 'carta' AND active = TRUE
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """)
+                    
+                    result = cursor.fetchone()
             
             if result:
-                print(f"✅ Menú trobat: {result[1]}")
+                self.logger.info(f"✅ Menú trobat: {result[1]}")
                 return {
                     'id': result[0],
                     'title': result[1],
@@ -317,77 +272,56 @@ class MediaManager:
                     'type': result[4]
                 }
             else:
-                print(f"❌ Cap menú trobat per type={menu_type}, day={day_name}")
-            
-            return None
+                self.logger.warning(f"❌ Cap menú trobat per type={menu_type}, day={day_name}")
+                return None
         
         except Exception as e:
-            print(f"❌ Error obtenint menú: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.error(f"❌ Error obtenint menú: {e}", exc_info=True)
             return None
     
     def deactivate_media(self, media_id):
         """Desactivar un media (no l'elimina, només l'amaga)"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                UPDATE restaurant_media
-                SET active = FALSE, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-            """, (media_id,))
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE restaurant_media
+                        SET active = FALSE, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (media_id,))
+            self.logger.info(f"✅ Media {media_id} desactivat")
             return True
         
         except Exception as e:
-            print(f"❌ Error desactivant media: {e}")
+            self.logger.error(f"❌ Error desactivant media: {e}", exc_info=True)
             return False
     
     def delete_media(self, media_id):
         """Eliminar completament un media (BD + Cloudinary)"""
         try:
-            # Obtenir public_id de Cloudinary
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT cloudinary_public_id, file_type
+                        FROM restaurant_media
+                        WHERE id = %s
+                    """, (media_id,))
+                    result = cursor.fetchone()
+                    
+                    if not result:
+                        self.logger.warning(f"❌ Media {media_id} no trobat")
+                        return False
+                    
+                    public_id, file_type = result
+                    resource_type = 'raw' if file_type == 'pdf' else 'image'
+                    
+                    cloudinary.uploader.destroy(public_id, resource_type=resource_type)
+                    
+                    cursor.execute("DELETE FROM restaurant_media WHERE id = %s", (media_id,))
             
-            cursor.execute("""
-                SELECT cloudinary_public_id, file_type
-                FROM restaurant_media
-                WHERE id = %s
-            """, (media_id,))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                cursor.close()
-                conn.close()
-                return False
-            
-            public_id = result[0]
-            file_type = result[1]
-            
-            # Eliminar de Cloudinary
-            resource_type = 'raw' if file_type == 'pdf' else 'image'
-            cloudinary.uploader.destroy(public_id, resource_type=resource_type)
-            
-            # Eliminar de la BD
-            cursor.execute("DELETE FROM restaurant_media WHERE id = %s", (media_id,))
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            print(f"✅ Media {media_id} eliminat correctament")
+            self.logger.info(f"✅ Media {media_id} eliminat correctament")
             return True
         
         except Exception as e:
-            print(f"❌ Error eliminant media: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.error(f"❌ Error eliminant media: {e}", exc_info=True)
             return False
