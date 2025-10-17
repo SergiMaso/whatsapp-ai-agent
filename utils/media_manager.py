@@ -113,16 +113,18 @@ class MediaManager:
                 resource_type=resource_type,
                 use_filename=True,
                 unique_filename=True,
-                access_mode='public'  # ✅ Fer el PDF públic per poder-lo obrir
+                access_mode='public',
+                type='upload',  # ✅ Fer el PDF públic per poder-lo obrir
             )
             
                         # Per PDFs, afegir paràmetre fl_attachment per forçar visualització al navegador
-            if file_type == 'pdf':
-                # Transformar URL per obrir al navegador en lloc de descarregar
-                file_url = upload_result['secure_url'].replace('/upload/', '/upload/fl_attachment/')
-            else:
-                file_url = upload_result['secure_url']
-                
+            # if file_type == 'pdf':
+            #     # Transformar URL per obrir al navegador en lloc de descarregar
+            #     file_url = upload_result['secure_url'].replace('/upload/', '/upload/fl_attachment/')
+            # else:
+            #     file_url = upload_result['secure_url']
+            
+            file_url = upload_result['secure_url']
             public_id = upload_result['public_id']
             file_size = upload_result.get('bytes', 0)
             

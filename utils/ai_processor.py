@@ -134,9 +134,11 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     # --- STEP 3: COMPROVAR ESTATS ABANS DE CRIDAR LA IA ---
     print(f"🔍 Comprovant estats actius...")
     
+    state_found = False
     for msg in reversed(history):
         # === ESTAT 1: Esperant observacions ===
         if msg['role'] == 'system' and msg['content'].startswith('WAITING_NOTES:'):
+            state_found = True
             appointment_id = int(msg['content'].split(':')[1])
             print(f"⏳ Estat actiu: WAITING_NOTES per reserva {appointment_id}")
             
@@ -198,9 +200,8 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
                 # Si respon afirmativament, sortir del bucle i deixar que la IA processi
                 break
         
-        # Si no hi ha cap estat actiu, sortir del bucle
-        elif msg['role'] != 'system':
-            break
+        # Continuar buscant estats en tot l'historial
+        # (no fer break prematurament)
     
     print(f"✅ Cap estat actiu - Processant amb IA...")
 
