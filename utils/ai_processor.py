@@ -127,6 +127,9 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
 
     # --- STEP 2: Obtenir historial ABANS de processar ---
     history = conversation_manager.get_history(phone, limit=10)
+    print(f"📚 DEBUG: Historial obtingut ({len(history)} missatges)")
+    for idx, msg in enumerate(history):
+        print(f"   [{idx}] {msg['role']}: {msg['content'][:50]}...")
     
     # --- STEP 3: COMPROVAR ESTATS ABANS DE CRIDAR LA IA ---
     print(f"🔍 Comprovant estats actius...")
