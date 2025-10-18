@@ -113,11 +113,18 @@ class MediaManager:
                 type='upload'
             )
             
-            # Fer que el PDF sigui visualitzable (no descarregable)
+            file_url = upload_result['secure_url']
+
+            # Si és PDF, fer que Cloudinary no forci la descàrrega
             if file_type == 'pdf':
-                file_url = upload_result['secure_url'].replace('/upload/', '/upload/fl_attachment:false/')
-            else:
-                file_url = upload_result['secure_url']
+                file_url = file_url.replace('/upload/', '/upload/fl_attachment:false/')
+
+
+            # # Fer que el PDF sigui visualitzable (no descarregable)
+            # if file_type == 'pdf':
+            #     file_url = upload_result['secure_url'].replace('/upload/', '/upload/fl_attachment:false/')
+            # else:
+            #     file_url = upload_result['secure_url']
             
             public_id = upload_result['public_id']
             file_size = upload_result.get('bytes', 0)
