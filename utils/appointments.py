@@ -921,6 +921,9 @@ class AppointmentManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Configurar timezone local
+            cursor.execute("SET timezone TO 'Europe/Madrid'")
+            
             cursor.execute("""
                 UPDATE appointments 
                 SET seated_at = CURRENT_TIMESTAMP,
@@ -948,6 +951,9 @@ class AppointmentManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
+            
+            # Configurar timezone local
+            cursor.execute("SET timezone TO 'Europe/Madrid'")
             
             cursor.execute("""
                 UPDATE appointments 
