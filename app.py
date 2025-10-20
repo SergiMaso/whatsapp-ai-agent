@@ -1084,6 +1084,98 @@ def deactivate_media_api(media_id):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+# ==========================================
+# ENDPOINTS PER TRACKING DE CLIENTS
+# ==========================================
+
+@app.route('/api/appointments/<int:appointment_id>/seated', methods=['POST'])
+def mark_appointment_seated(appointment_id):
+    """⚡ Marcar que el client s'ha assentat"""
+    try:
+        success = appointment_manager.mark_seated(appointment_id)
+        
+        if success:
+            return jsonify({'message': 'Client marcat com assentat', 'appointment_id': appointment_id}), 200
+        else:
+            return jsonify({'error': 'No s\'ha pogut marcar com assentat'}), 400
+    
+    except Exception as e:
+        print(f"❌ Error marcant seated: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/appointments/<int:appointment_id>/left', methods=['POST'])
+def mark_appointment_left(appointment_id):
+    """👋 Marcar que el client ha marxat"""
+    try:
+        success, duration = appointment_manager.mark_left(appointment_id)
+        
+        if success:
+            return jsonify({
+                'message': 'Client marcat com marxat',
+                'appointment_id': appointment_id,
+                'duration_minutes': duration
+            }), 200
+        else:
+            return jsonify({'error': 'No s\'ha pogut marcar com marxat'}), 400
+    
+    except Exception as e:
+        print(f"❌ Error marcant left: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/appointments/<int:appointment_id>/no-show', methods=['POST'])
+def mark_appointment_no_show(appointment_id):
+    """❌ Marcar no-show"""
+    try:
+        data = request.get_json() or {}
+        phone = data.get('phone')
+        
+        if not phone:
+            return jsonify({'error': 'Telèfon obligatori'}), 400
+        
+        success = appointment_manager.mark_no_show(appointment_id, phone)
+        
+        if success:
+            return jsonify({
+                'message': 'No-show registrat',
+                'appointment_id': appointment_id
+            }), 200
+        else:
+            return jsonify({'error': 'No s\'ha pogut registrar el no-show'}), 400
+    
+    except Exception as e:
+        print(f"❌ Error marcant no-show: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/customers/<phone>/stats', methods=['GET'])
+def get_customer_stats_api(phone):
+    """📊 Obtenir estadístiques d'un client"""
+    try:
+        stats = appointment_manager.get_customer_stats(phone)
+        
+        if stats:
+            return jsonify(stats), 200
+        else:
+            return jsonify({'error': 'Client no trobat'}), 404
+    
+    except Exception as e:
+        print(f"❌ Error obtenint stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/stats/global', methods=['GET'])
+def get_global_stats_api():
+    """🌎 Obtenir estadístiques globals"""
+    try:
+        stats = appointment_manager.get_global_stats()
+        
+        if stats:
+            return jsonify(stats), 200
+        else:
+            return jsonify({'error': 'No s\'han pogut obtenir les estadístiques'}), 500
+    
+    except Exception as e:
+        print(f"❌ Error obtenint stats globals: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

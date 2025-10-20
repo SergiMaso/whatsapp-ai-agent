@@ -76,6 +76,43 @@ class AppointmentManager:
                 print("✅ Columna notes afegida a appointments")
                 conn.commit()
             
+            # Afegir columnes per tracking de temps i no-shows
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='appointments' AND column_name='seated_at'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE appointments ADD COLUMN seated_at TIMESTAMPTZ")
+                print("✅ Columna seated_at afegida a appointments")
+                conn.commit()
+            
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='appointments' AND column_name='left_at'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE appointments ADD COLUMN left_at TIMESTAMPTZ")
+                print("✅ Columna left_at afegida a appointments")
+                conn.commit()
+            
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='appointments' AND column_name='duration_minutes'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE appointments ADD COLUMN duration_minutes INTEGER")
+                print("✅ Columna duration_minutes afegida a appointments")
+                conn.commit()
+            
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='appointments' AND column_name='no_show'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE appointments ADD COLUMN no_show BOOLEAN DEFAULT FALSE")
+                print("✅ Columna no_show afegida a appointments")
+                conn.commit()
+            
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
@@ -103,6 +140,16 @@ class AppointmentManager:
             """)
             if not cursor.fetchone():
                 cursor.execute("ALTER TABLE customers ADD COLUMN language VARCHAR(10) DEFAULT 'es'")
+                conn.commit()
+            
+            # Afegir columna no_show_count
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='customers' AND column_name='no_show_count'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE customers ADD COLUMN no_show_count INTEGER DEFAULT 0")
+                print("✅ Columna no_show_count afegida a customers")
                 conn.commit()
             
             cursor.execute("""
@@ -851,6 +898,211 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error verificando si está abierto: {e}")
             return True, "Error - assumint obert"
+    
+    # ========================================
+    # MÈTODES PER TRACKING DE CLIENTS (SEATED, LEFT, NO-SHOW)
+    # ========================================
+    
+    def mark_seated(self, appointment_id):
+        """Marcar que el client s'ha assentat"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE appointments 
+                SET seated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND status = 'confirmed' AND seated_at IS NULL
+            """, (appointment_id,))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            if affected > 0:
+                print(f"🪑 Client assentat: Reserva ID {appointment_id}")
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Error marcant seated: {e}")
+            return False
+    
+    def mark_left(self, appointment_id):
+        """Marcar que el client ha marxat i calcular durada"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE appointments 
+                SET left_at = CURRENT_TIMESTAMP,
+                    duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - seated_at))/60
+                WHERE id = %s AND status = 'confirmed' AND seated_at IS NOT NULL AND left_at IS NULL
+                RETURNING duration_minutes
+            """, (appointment_id,))
+            
+            result = cursor.fetchone()
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            if result:
+                duration = int(result[0])
+                print(f"👋 Client ha marxat: Reserva ID {appointment_id} - Durada: {duration} min")
+                return True, duration
+            return False, None
+        except Exception as e:
+            print(f"❌ Error marcant left: {e}")
+            return False, None
+    
+    def mark_no_show(self, appointment_id, phone):
+        """Marcar no-show i incrementar contador del client"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Marcar reserva com a no-show
+            cursor.execute("""
+                UPDATE appointments 
+                SET no_show = TRUE, status = 'no_show'
+                WHERE id = %s AND status = 'confirmed'
+            """, (appointment_id,))
+            
+            # Incrementar contador de no-shows del client
+            cursor.execute("""
+                UPDATE customers 
+                SET no_show_count = no_show_count + 1
+                WHERE phone = %s
+            """, (phone,))
+            
+            # Decrementar visit_count ja que no ha vingut
+            cursor.execute("""
+                UPDATE customers 
+                SET visit_count = GREATEST(visit_count - 1, 0)
+                WHERE phone = %s
+            """, (phone,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            print(f"❌ No-show registrat: Reserva ID {appointment_id}")
+            return True
+        except Exception as e:
+            print(f"❌ Error marcant no-show: {e}")
+            return False
+    
+    def get_customer_stats(self, phone):
+        """Obtenir estadístiques d'un client"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Obtenir info bàsica del client
+            cursor.execute("""
+                SELECT name, visit_count, no_show_count, last_visit
+                FROM customers
+                WHERE phone = %s
+            """, (phone,))
+            
+            customer = cursor.fetchone()
+            
+            if not customer:
+                cursor.close()
+                conn.close()
+                return None
+            
+            # Obtenir durada mitjana de les visites
+            cursor.execute("""
+                SELECT AVG(duration_minutes) as avg_duration,
+                       COUNT(*) as completed_visits
+                FROM appointments
+                WHERE phone = %s 
+                  AND duration_minutes IS NOT NULL
+                  AND no_show = FALSE
+            """, (phone,))
+            
+            stats = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                'name': customer[0],
+                'total_visits': customer[1],
+                'no_shows': customer[2],
+                'last_visit': customer[3].isoformat() if customer[3] else None,
+                'avg_duration': int(stats[0]) if stats[0] else None,
+                'completed_visits': stats[1]
+            }
+        except Exception as e:
+            print(f"❌ Error obtenint estadístiques: {e}")
+            return None
+    
+    def get_global_stats(self):
+        """Obtenir estadístiques globals del restaurant"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Durada mitjana global
+            cursor.execute("""
+                SELECT AVG(duration_minutes) as avg_duration,
+                       MIN(duration_minutes) as min_duration,
+                       MAX(duration_minutes) as max_duration,
+                       COUNT(*) as total_completed
+                FROM appointments
+                WHERE duration_minutes IS NOT NULL AND no_show = FALSE
+            """)
+            
+            duration_stats = cursor.fetchone()
+            
+            # Total de no-shows
+            cursor.execute("""
+                SELECT COUNT(*) as total_no_shows
+                FROM appointments
+                WHERE no_show = TRUE
+            """)
+            
+            no_show_count = cursor.fetchone()[0]
+            
+            # Top clients
+            cursor.execute("""
+                SELECT c.name, c.phone, c.visit_count, c.no_show_count,
+                       AVG(a.duration_minutes) as avg_duration
+                FROM customers c
+                LEFT JOIN appointments a ON c.phone = a.phone AND a.duration_minutes IS NOT NULL
+                GROUP BY c.id, c.name, c.phone, c.visit_count, c.no_show_count
+                ORDER BY c.visit_count DESC
+                LIMIT 10
+            """)
+            
+            top_customers = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                'avg_duration': int(duration_stats[0]) if duration_stats[0] else 0,
+                'min_duration': int(duration_stats[1]) if duration_stats[1] else 0,
+                'max_duration': int(duration_stats[2]) if duration_stats[2] else 0,
+                'total_completed': duration_stats[3],
+                'total_no_shows': no_show_count,
+                'top_customers': [
+                    {
+                        'name': row[0],
+                        'phone': row[1],
+                        'visits': row[2],
+                        'no_shows': row[3],
+                        'avg_duration': int(row[4]) if row[4] else None
+                    }
+                    for row in top_customers
+                ]
+            }
+        except Exception as e:
+            print(f"❌ Error obtenint estadístiques globals: {e}")
+            return None
 
 
 class ConversationManager:
