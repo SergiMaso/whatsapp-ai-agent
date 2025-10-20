@@ -62,7 +62,7 @@ class AppointmentManager:
                     notes TEXT,
                     status VARCHAR(20) DEFAULT 'confirmed',
                     reminder_sent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 )
             """)
             
@@ -129,7 +129,7 @@ class AppointmentManager:
                     name VARCHAR(100) NOT NULL,
                     language VARCHAR(10) DEFAULT 'es',
                     visit_count INTEGER DEFAULT 0,
-                    last_visit TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    last_visit TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 )
             """)
             
@@ -167,7 +167,7 @@ class AppointmentManager:
                     phone VARCHAR(50) NOT NULL,
                     role VARCHAR(20) NOT NULL,
                     content TEXT NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 )
             """)
             
@@ -183,8 +183,8 @@ class AppointmentManager:
                     dinner_end TIME,
                     is_custom BOOLEAN DEFAULT FALSE,
                     notes TEXT,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid',
+                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 )
             """)
             print("✅ Taula opening_hours creada/verificada")
@@ -445,7 +445,7 @@ class AppointmentManager:
             # Incrementar visit_count del client
             cursor.execute("""
                 UPDATE customers 
-                SET visit_count = visit_count + 1, last_visit = CURRENT_TIMESTAMP
+                SET visit_count = visit_count + 1, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 WHERE phone = %s
             """, (phone,))
             
@@ -665,16 +665,16 @@ class AppointmentManager:
             if language:
                 cursor.execute("""
                     INSERT INTO customers (phone, name, language, last_visit)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                     ON CONFLICT (phone) 
-                    DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP
+                    DO UPDATE SET name = EXCLUDED.name, language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 """, (phone, name, language))
             else:
                 cursor.execute("""
                     INSERT INTO customers (phone, name, last_visit)
-                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                     ON CONFLICT (phone) 
-                    DO UPDATE SET name = EXCLUDED.name, last_visit = CURRENT_TIMESTAMP
+                    DO UPDATE SET name = EXCLUDED.name, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
                 """, (phone, name))
             
             conn.commit()
@@ -718,9 +718,9 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO customers (phone, name, language, last_visit)
-                VALUES (%s, 'TEMP', %s, CURRENT_TIMESTAMP)
+                VALUES (%s, 'TEMP', %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 ON CONFLICT (phone) 
-                DO UPDATE SET language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP
+                DO UPDATE SET language = EXCLUDED.language, last_visit = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
             """, (phone, language))
             
             conn.commit()
@@ -821,7 +821,7 @@ class AppointmentManager:
             
             cursor.execute("""
                 INSERT INTO opening_hours (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid')
                 ON CONFLICT (date) 
                 DO UPDATE SET 
                     status = EXCLUDED.status,
@@ -831,7 +831,7 @@ class AppointmentManager:
                     dinner_end = EXCLUDED.dinner_end,
                     notes = EXCLUDED.notes,
                     is_custom = EXCLUDED.is_custom,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid'
             """, (date, status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom))
             
             conn.commit()
@@ -926,8 +926,8 @@ class AppointmentManager:
             
             cursor.execute("""
                 UPDATE appointments 
-                SET seated_at = CURRENT_TIMESTAMP,
-                    delay_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - start_time))/60
+                SET seated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid',
+                    delay_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid' - start_time))/60
                 WHERE id = %s AND status = 'confirmed' AND seated_at IS NULL
                 RETURNING delay_minutes
             """, (appointment_id,))
@@ -957,8 +957,8 @@ class AppointmentManager:
             
             cursor.execute("""
                 UPDATE appointments 
-                SET left_at = CURRENT_TIMESTAMP,
-                    duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - seated_at))/60,
+                SET left_at = CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid',
+                    duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Madrid' - seated_at))/60,
                     status = 'completed'
                 WHERE id = %s AND status = 'confirmed' AND seated_at IS NOT NULL AND left_at IS NULL
                 RETURNING duration_minutes
