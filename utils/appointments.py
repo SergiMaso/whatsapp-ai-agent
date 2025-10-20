@@ -114,6 +114,15 @@ class AppointmentManager:
                 conn.commit()
             
             cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='appointments' AND column_name='delay_minutes'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE appointments ADD COLUMN delay_minutes INTEGER")
+                print("✅ Columna delay_minutes afegida a appointments")
+                conn.commit()
+            
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
                     phone VARCHAR(50) UNIQUE NOT NULL,
@@ -904,29 +913,32 @@ class AppointmentManager:
     # ========================================
     
     def mark_seated(self, appointment_id):
-        """Marcar que el client s'ha assentat"""
+        """Marcar que el client s'ha assentat i calcular retraso"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
                 UPDATE appointments 
-                SET seated_at = CURRENT_TIMESTAMP
+                SET seated_at = CURRENT_TIMESTAMP,
+                    delay_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - start_time))/60
                 WHERE id = %s AND status = 'confirmed' AND seated_at IS NULL
+                RETURNING delay_minutes
             """, (appointment_id,))
             
-            affected = cursor.rowcount
+            result = cursor.fetchone()
             conn.commit()
             cursor.close()
             conn.close()
             
-            if affected > 0:
-                print(f"🪑 Client assentat: Reserva ID {appointment_id}")
-                return True
-            return False
+            if result:
+                delay = int(result[0])
+                print(f"🪑 Client assentat: Reserva ID {appointment_id} - Retraso: {delay} min")
+                return True, delay
+            return False, None
         except Exception as e:
             print(f"❌ Error marcant seated: {e}")
-            return False
+            return False, None
     
     def mark_left(self, appointment_id):
         """Marcar que el client ha marxat i calcular durada"""

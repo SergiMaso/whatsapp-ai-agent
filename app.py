@@ -1092,10 +1092,14 @@ def deactivate_media_api(media_id):
 def mark_appointment_seated(appointment_id):
     """⚡ Marcar que el client s'ha assentat"""
     try:
-        success = appointment_manager.mark_seated(appointment_id)
+        success, delay = appointment_manager.mark_seated(appointment_id)
         
         if success:
-            return jsonify({'message': 'Client marcat com assentat', 'appointment_id': appointment_id}), 200
+            return jsonify({
+                'message': 'Client marcat com assentat', 
+                'appointment_id': appointment_id,
+                'delay_minutes': delay
+            }), 200
         else:
             return jsonify({'error': 'No s\'ha pogut marcar com assentat'}), 400
     
