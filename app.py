@@ -123,6 +123,9 @@ def get_appointments():
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
+        # Configurar timezone per la sessió
+        cursor.execute("SET timezone TO 'Europe/Madrid'")
+        
         # Obtenir reserves amb informació de taula i notes
         cursor.execute("""
             SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time, 

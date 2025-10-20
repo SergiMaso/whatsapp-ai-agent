@@ -415,6 +415,9 @@ class AppointmentManager:
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
             
+            # IMPORTANT: Assegurar que el client existeix a customers
+            self.save_customer_info(phone, client_name)
+            
             customer_language = self.get_customer_language(phone) or 'es'
             
             # Buscar taules (individuals o combinades)
