@@ -949,7 +949,8 @@ class AppointmentManager:
             cursor.execute("""
                 UPDATE appointments 
                 SET left_at = CURRENT_TIMESTAMP,
-                    duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - seated_at))/60
+                    duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - seated_at))/60,
+                    status = 'completed'
                 WHERE id = %s AND status = 'confirmed' AND seated_at IS NOT NULL AND left_at IS NULL
                 RETURNING duration_minutes
             """, (appointment_id,))
@@ -961,7 +962,7 @@ class AppointmentManager:
             
             if result:
                 duration = int(result[0])
-                print(f"👋 Client ha marxat: Reserva ID {appointment_id} - Durada: {duration} min")
+                print(f"👋 Client ha marxat: Reserva ID {appointment_id} - Durada: {duration} min - Status: completed")
                 return True, duration
             return False, None
         except Exception as e:
