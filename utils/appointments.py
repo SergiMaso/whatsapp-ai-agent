@@ -2,6 +2,7 @@ import psycopg2
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
+import pytz  # IMPORTANT: Per gestionar timezones
 
 load_dotenv()
 
@@ -415,7 +416,14 @@ class AppointmentManager:
     
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
-            start_time = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+            # Crear timezone de Barcelona
+            barcelona_tz = pytz.timezone('Europe/Madrid')
+            
+            # Parsejar la data/hora com a NAIVE
+            naive_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+            
+            # Convertir a timezone-aware (Barcelona)
+            start_time = barcelona_tz.localize(naive_datetime)
             end_time = start_time + timedelta(hours=duration_hours)
             date_only = start_time.date()
             
@@ -499,7 +507,15 @@ class AppointmentManager:
             if new_date or new_time:
                 date_part = new_date if new_date else current_start.strftime("%Y-%m-%d")
                 time_part = new_time if new_time else current_start.strftime("%H:%M")
-                new_start = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+                
+                # Crear timezone de Barcelona
+                barcelona_tz = pytz.timezone('Europe/Madrid')
+                
+                # Parsejar com a NAIVE
+                naive_datetime = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+                
+                # Convertir a timezone-aware (Barcelona)
+                new_start = barcelona_tz.localize(naive_datetime)
             else:
                 new_start = current_start
             
