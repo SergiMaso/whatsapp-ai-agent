@@ -1190,6 +1190,199 @@ def get_global_stats_api():
         return jsonify({'error': str(e)}), 500
 
 
+# ==========================================
+# BROADCAST MESSAGES (Missatges Difusos)
+# ==========================================
+
+@app.route('/api/broadcast', methods=['POST'])
+def send_broadcast():
+    """📢 Enviar missatge difús a tots els clients o filtrats"""
+    try:
+        data = request.json
+        
+        message = data.get('message')
+        filter_type = data.get('filter_type', 'all')  # 'all', 'language', 'recent_customers'
+        filter_value = data.get('filter_value')  # ex: 'ca', 'es', 'en'
+        
+        if not message:
+            return jsonify({'error': 'El missatge és obligatori'}), 400
+        
+        # Obtenir clients segons filtre
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        if filter_type == 'all':
+            cursor.execute("""
+                SELECT DISTINCT phone, name, language 
+                FROM customers 
+                WHERE name != 'TEMP'
+            """)
+        elif filter_type == 'language':
+            if not filter_value:
+                return jsonify({'error': 'Cal especificar l\\'idioma'}), 400
+            cursor.execute("""
+                SELECT DISTINCT phone, name, language 
+                FROM customers 
+                WHERE language = %s AND name != 'TEMP'
+            """, (filter_value,))
+        elif filter_type == 'recent_customers':
+            # Clients amb visita en els últims 30 dies
+            cursor.execute("""
+                SELECT DISTINCT phone, name, language 
+                FROM customers 
+                WHERE last_visit >= CURRENT_DATE - INTERVAL '30 days' 
+                AND name != 'TEMP'
+            """)
+        else:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Tipus de filtre invàlid'}), 400
+        
+        recipients = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        if not recipients:
+            return jsonify({'error': 'No s\\'han trobat destinataris'}), 404
+        
+        # Enviar missatges
+        sent_count = 0
+        failed_count = 0
+        results = []
+        
+        for phone, name, language in recipients:
+            try:
+                # Determinar canal (WhatsApp o Telegram)
+                if phone.startswith('telegram:'):
+                    # Enviar via Telegram
+                    user_id = phone.replace('telegram:', '')
+                    import requests
+                    url = f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage"
+                    payload = {
+                        'chat_id': user_id,
+                        'text': message
+                    }
+                    response = requests.post(url, json=payload)
+                    
+                    if response.status_code == 200:
+                        sent_count += 1
+                        results.append({'phone': phone, 'name': name, 'status': 'sent', 'channel': 'telegram'})
+                        print(f"✅ Telegram enviat a {name} ({phone})")
+                    else:
+                        failed_count += 1
+                        results.append({'phone': phone, 'name': name, 'status': 'failed', 'channel': 'telegram', 'error': response.text})
+                        print(f"❌ Error Telegram a {name}: {response.text}")
+                else:
+                    # Enviar via WhatsApp (Twilio)
+                    # Netejar prefix whatsapp: si existeix
+                    clean_phone = phone.replace('whatsapp:', '')
+                    
+                    twilio_message = twilio_client.messages.create(
+                        from_=os.getenv('TWILIO_WHATSAPP_NUMBER'),
+                        body=message,
+                        to=f'whatsapp:{clean_phone}'
+                    )
+                    
+                    sent_count += 1
+                    results.append({'phone': phone, 'name': name, 'status': 'sent', 'channel': 'whatsapp'})
+                    print(f"✅ WhatsApp enviat a {name} ({phone})")
+                    
+            except Exception as e:
+                failed_count += 1
+                results.append({'phone': phone, 'name': name, 'status': 'failed', 'error': str(e)})
+                print(f"❌ Error enviant a {name} ({phone}): {e}")
+        
+        return jsonify({
+            'message': 'Missatge difús processat',
+            'total_recipients': len(recipients),
+            'sent': sent_count,
+            'failed': failed_count,
+            'results': results
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Error enviant broadcast: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/broadcast/preview', methods=['POST'])
+def preview_broadcast():
+    """👁️ Previsualitzar destinataris del missatge difús"""
+    try:
+        data = request.json
+        
+        filter_type = data.get('filter_type', 'all')
+        filter_value = data.get('filter_value')
+        
+        # Obtenir clients segons filtre
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        if filter_type == 'all':
+            cursor.execute("""
+                SELECT phone, name, language 
+                FROM customers 
+                WHERE name != 'TEMP'
+                ORDER BY last_visit DESC
+            """)
+        elif filter_type == 'language':
+            if not filter_value:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Cal especificar l\\'idioma'}), 400
+            cursor.execute("""
+                SELECT phone, name, language 
+                FROM customers 
+                WHERE language = %s AND name != 'TEMP'
+                ORDER BY last_visit DESC
+            """, (filter_value,))
+        elif filter_type == 'recent_customers':
+            cursor.execute("""
+                SELECT phone, name, language 
+                FROM customers 
+                WHERE last_visit >= CURRENT_DATE - INTERVAL '30 days' 
+                AND name != 'TEMP'
+                ORDER BY last_visit DESC
+            """)
+        else:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Tipus de filtre invàlid'}), 400
+        
+        recipients = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Agrupar per canal i idioma
+        by_channel = {'whatsapp': 0, 'telegram': 0}
+        by_language = {'ca': 0, 'es': 0, 'en': 0}
+        recipient_list = []
+        
+        for phone, name, language in recipients:
+            channel = 'telegram' if phone.startswith('telegram:') else 'whatsapp'
+            by_channel[channel] += 1
+            by_language[language] = by_language.get(language, 0) + 1
+            
+            recipient_list.append({
+                'phone': phone,
+                'name': name,
+                'language': language,
+                'channel': channel
+            })
+        
+        return jsonify({
+            'total': len(recipients),
+            'by_channel': by_channel,
+            'by_language': by_language,
+            'recipients': recipient_list
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Error previsualitzant broadcast: {e}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
