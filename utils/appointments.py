@@ -421,11 +421,20 @@ class AppointmentManager:
             
             # Parsejar la data/hora com a NAIVE
             naive_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+            print(f"🕐 [TIMEZONE DEBUG] Input rebut: date={date}, time={time}")
+            print(f"🕐 [TIMEZONE DEBUG] Datetime NAIVE creat: {naive_datetime}")
             
             # Convertir a timezone-aware (Barcelona)
             start_time = barcelona_tz.localize(naive_datetime)
+            print(f"🕐 [TIMEZONE DEBUG] Datetime AWARE (després localize): {start_time}")
+            print(f"🕐 [TIMEZONE DEBUG] Timezone info: {start_time.tzinfo}")
+            print(f"🕐 [TIMEZONE DEBUG] ISO format: {start_time.isoformat()}")
+            
             end_time = start_time + timedelta(hours=duration_hours)
+            print(f"🕐 [TIMEZONE DEBUG] End time: {end_time.isoformat()}")
+            
             date_only = start_time.date()
+            print(f"🕐 [TIMEZONE DEBUG] Date only: {date_only}")
             
             # IMPORTANT: Assegurar que el client existeix a customers
             self.save_customer_info(phone, client_name)
@@ -444,6 +453,10 @@ class AppointmentManager:
             # Crear una reserva per cada taula
             appointment_ids = []
             for table in tables_result['tables']:
+                print(f"🕐 [TIMEZONE DEBUG] Abans d'inserir a BD:")
+                print(f"🕐 [TIMEZONE DEBUG]   - start_time que s'enviarà: {start_time} (type: {type(start_time)})")
+                print(f"🕐 [TIMEZONE DEBUG]   - end_time que s'enviarà: {end_time} (type: {type(end_time)})")
+                
                 cursor.execute("""
                     INSERT INTO appointments 
                     (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
@@ -453,6 +466,11 @@ class AppointmentManager:
                 
                 result = cursor.fetchone()
                 appointment_ids.append(result[0])
+                
+                print(f"🕐 [TIMEZONE DEBUG] Després d'inserir (retornat per BD):")
+                print(f"🕐 [TIMEZONE DEBUG]   - ID: {result[0]}")
+                print(f"🕐 [TIMEZONE DEBUG]   - start_time desde BD: {result[1]}")
+                print(f"🕐 [TIMEZONE DEBUG]   - end_time desde BD: {result[2]}")
             
             # Incrementar visit_count del client
             cursor.execute("""
@@ -508,16 +526,22 @@ class AppointmentManager:
                 date_part = new_date if new_date else current_start.strftime("%Y-%m-%d")
                 time_part = new_time if new_time else current_start.strftime("%H:%M")
                 
+                print(f"🕐 [TIMEZONE DEBUG UPDATE] Input rebut: date={date_part}, time={time_part}")
+                
                 # Crear timezone de Barcelona
                 barcelona_tz = pytz.timezone('Europe/Madrid')
                 
                 # Parsejar com a NAIVE
                 naive_datetime = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+                print(f"🕐 [TIMEZONE DEBUG UPDATE] Datetime NAIVE: {naive_datetime}")
                 
                 # Convertir a timezone-aware (Barcelona)
                 new_start = barcelona_tz.localize(naive_datetime)
+                print(f"🕐 [TIMEZONE DEBUG UPDATE] Datetime AWARE: {new_start}")
+                print(f"🕐 [TIMEZONE DEBUG UPDATE] ISO format: {new_start.isoformat()}")
             else:
                 new_start = current_start
+                print(f"🕐 [TIMEZONE DEBUG UPDATE] Mantenint hora actual: {new_start}")
             
             duration = (current_end - current_start).total_seconds() / 3600
             new_end = new_start + timedelta(hours=duration)
