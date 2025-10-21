@@ -97,22 +97,19 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         print(f"🌍 Client conegut - Idioma mantingut: {language}")
     else:
         if message_count == 0:
+            # Primer missatge: detectar però NO guardar encara
             language = detect_language(message)
-            appointment_manager.save_customer_language(phone, language)
-            print(f"👋 Primer missatge → Idioma detectat i guardat: {language}")
+            print(f"👋 Primer missatge → Idioma detectat (temporal, no guardat): {language}")
         elif message_count == 1:
+            # Segon missatge: ara sí que el guardem!
             new_language = detect_language(message)
-            old_language = appointment_manager.get_customer_language(phone)
-            if new_language != old_language:
-                appointment_manager.save_customer_language(phone, new_language)
-                language = new_language
-                print(f"🔄 Segon missatge → idioma actualitzat: {old_language} → {new_language}")
-            else:
-                language = old_language
-                print(f"✅ Segon missatge → idioma mantingut: {language}")
+            appointment_manager.save_customer_language(phone, new_language)
+            language = new_language
+            print(f"🔄 Segon missatge → Idioma detectat i guardat: {new_language}")
         else:
-            language = appointment_manager.get_customer_language(phone)
-            print(f"📌 Tercer missatge o més → idioma fix: {language}")
+            # A partir del tercer missatge
+            language = appointment_manager.get_customer_language(phone) or 'es'
+            print(f"📌 Tercer missatge o més → idioma: {language}")
 
     print(f"✅ Idioma final: {language}")
 
