@@ -1373,6 +1373,187 @@ def preview_broadcast():
     except Exception as e:
         print(f"❌ Error previsualitzant broadcast: {e}")
         return jsonify({'error': str(e)}), 500
+    
+    
+# ==========================================
+# CUSTOMER UPDATE & DELETE ENDPOINTS
+# ==========================================
+
+@app.route('/api/customers/<phone>', methods=['PUT'])
+def update_customer_api(phone):
+    """✏️ Actualitzar informació d'un client"""
+    try:
+        data = request.json
+        
+        # Netejar prefix whatsapp: o telegram: si existeix
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        # Validar que existeix el client
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM customers WHERE phone = %s", (clean_phone,))
+        existing = cursor.fetchone()
+        
+        if not existing:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Client no trobat'}), 404
+        
+        # Camps actualitzables
+        updates = []
+        values = []
+        
+        if 'name' in data:
+            if not data['name'] or data['name'].strip() == '':
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'El nom no pot estar buit'}), 400
+            updates.append("name = %s")
+            values.append(data['name'].strip())
+        
+        if 'language' in data:
+            # Acceptar qualsevol idioma (no limitem)
+            updates.append("language = %s")
+            values.append(data['language'])
+        
+        # Si s'ha canviat el telèfon
+        new_phone = None
+        if 'phone' in data and data['phone'] != clean_phone:
+            new_phone = data['phone'].strip()
+            
+            # Validar que el nou telèfon no existeix ja
+            cursor.execute("SELECT name FROM customers WHERE phone = %s", (new_phone,))
+            if cursor.fetchone():
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Ja existeix un client amb aquest telèfon'}), 409
+            
+            # Actualitzar telèfon a customers
+            updates.append("phone = %s")
+            values.append(new_phone)
+        
+        if not updates:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'No hi ha camps per actualitzar'}), 400
+        
+        # Actualitzar client
+        values.append(clean_phone)
+        query = f"UPDATE customers SET {', '.join(updates)} WHERE phone = %s"
+        
+        cursor.execute(query, values)
+        
+        # Si s'ha canviat el telèfon, actualitzar també a appointments i conversations
+        if new_phone:
+            cursor.execute("UPDATE appointments SET phone = %s WHERE phone = %s", (new_phone, clean_phone))
+            cursor.execute("UPDATE conversations SET phone = %s WHERE phone = %s", (new_phone, clean_phone))
+            print(f"✅ Telèfon actualitzat de {clean_phone} a {new_phone}")
+        
+        conn.commit()
+        
+        # Obtenir dades actualitzades
+        final_phone = new_phone if new_phone else clean_phone
+        cursor.execute("""
+            SELECT phone, name, language, visit_count, last_visit
+            FROM customers
+            WHERE phone = %s
+        """, (final_phone,))
+        
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if row:
+            updated_customer = {
+                'phone': row[0],
+                'name': row[1],
+                'language': row[2],
+                'visit_count': row[3],
+                'last_visit': row[4].isoformat() if row[4] else None
+            }
+            
+            return jsonify({
+                'message': 'Client actualitzat correctament',
+                'customer': updated_customer
+            }), 200
+        else:
+            return jsonify({'error': 'Error obtenint dades actualitzades'}), 500
+    
+    except Exception as e:
+        print(f"❌ Error actualitzant client: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/customers/<phone>', methods=['DELETE'])
+def delete_customer_api(phone):
+    """🗑️ Eliminar un client i totes les seves dades"""
+    try:
+        # Netejar prefix whatsapp: o telegram: si existeix
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        conn = appointment_manager.get_connection()
+        cursor = conn.cursor()
+        
+        # Verificar que existeix el client
+        cursor.execute("SELECT name FROM customers WHERE phone = %s", (clean_phone,))
+        existing = cursor.fetchone()
+        
+        if not existing:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Client no trobat'}), 404
+        
+        # Comprovar si té reserves futures
+        cursor.execute("""
+            SELECT COUNT(*) FROM appointments
+            WHERE phone = %s AND status = 'confirmed' AND date >= CURRENT_DATE
+        """, (clean_phone,))
+        
+        future_appointments = cursor.fetchone()[0]
+        
+        if future_appointments > 0:
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'error': f'No es pot eliminar. El client té {future_appointments} reserves futures. Cancel·la-les primer.'
+            }), 409
+        
+        # Eliminar en cascada:
+        # 1. Conversations
+        cursor.execute("DELETE FROM conversations WHERE phone = %s", (clean_phone,))
+        deleted_conversations = cursor.rowcount
+        
+        # 2. Appointments (passades)
+        cursor.execute("DELETE FROM appointments WHERE phone = %s", (clean_phone,))
+        deleted_appointments = cursor.rowcount
+        
+        # 3. Customer
+        cursor.execute("DELETE FROM customers WHERE phone = %s", (clean_phone,))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"✅ Client {clean_phone} eliminat:")
+        print(f"   - {deleted_conversations} converses")
+        print(f"   - {deleted_appointments} reserves")
+        
+        return jsonify({
+            'message': 'Client eliminat correctament',
+            'deleted': {
+                'conversations': deleted_conversations,
+                'appointments': deleted_appointments
+            }
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Error eliminant client: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
