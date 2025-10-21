@@ -1201,13 +1201,12 @@ def send_broadcast():
         data = request.json
         
         message = data.get('message')
-        filter_type = data.get('filter_type', 'all')  # 'all', 'language', 'recent_customers'
-        filter_value = data.get('filter_value')  # ex: 'ca', 'es', 'en'
+        filter_type = data.get('filter_type', 'all')
+        filter_value = data.get('filter_value')
         
         if not message:
             return jsonify({'error': 'El missatge és obligatori'}), 400
         
-        # Obtenir clients segons filtre
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
@@ -1219,14 +1218,13 @@ def send_broadcast():
             """)
         elif filter_type == 'language':
             if not filter_value:
-                return jsonify({'error': 'Cal especificar l\\'idioma'}), 400
+                return jsonify({'error': "Cal especificar l'idioma"}), 400
             cursor.execute("""
                 SELECT DISTINCT phone, name, language 
                 FROM customers 
                 WHERE language = %s AND name != 'TEMP'
             """, (filter_value,))
         elif filter_type == 'recent_customers':
-            # Clients amb visita en els últims 30 dies
             cursor.execute("""
                 SELECT DISTINCT phone, name, language 
                 FROM customers 
@@ -1243,18 +1241,15 @@ def send_broadcast():
         conn.close()
         
         if not recipients:
-            return jsonify({'error': 'No s\\'han trobat destinataris'}), 404
+            return jsonify({'error': "No s'han trobat destinataris"}), 404
         
-        # Enviar missatges
         sent_count = 0
         failed_count = 0
         results = []
         
         for phone, name, language in recipients:
             try:
-                # Determinar canal (WhatsApp o Telegram)
                 if phone.startswith('telegram:'):
-                    # Enviar via Telegram
                     user_id = phone.replace('telegram:', '')
                     import requests
                     url = f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage"
@@ -1273,8 +1268,6 @@ def send_broadcast():
                         results.append({'phone': phone, 'name': name, 'status': 'failed', 'channel': 'telegram', 'error': response.text})
                         print(f"❌ Error Telegram a {name}: {response.text}")
                 else:
-                    # Enviar via WhatsApp (Twilio)
-                    # Netejar prefix whatsapp: si existeix
                     clean_phone = phone.replace('whatsapp:', '')
                     
                     twilio_message = twilio_client.messages.create(
@@ -1316,7 +1309,6 @@ def preview_broadcast():
         filter_type = data.get('filter_type', 'all')
         filter_value = data.get('filter_value')
         
-        # Obtenir clients segons filtre
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
         
@@ -1331,7 +1323,7 @@ def preview_broadcast():
             if not filter_value:
                 cursor.close()
                 conn.close()
-                return jsonify({'error': 'Cal especificar l\\'idioma'}), 400
+                return jsonify({'error': "Cal especificar l'idioma"}), 400
             cursor.execute("""
                 SELECT phone, name, language 
                 FROM customers 
@@ -1355,7 +1347,6 @@ def preview_broadcast():
         cursor.close()
         conn.close()
         
-        # Agrupar per canal i idioma
         by_channel = {'whatsapp': 0, 'telegram': 0}
         by_language = {'ca': 0, 'es': 0, 'en': 0}
         recipient_list = []
