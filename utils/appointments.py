@@ -20,8 +20,12 @@ class AppointmentManager:
         self.ensure_tables_exist()
     
     def get_connection(self):
-        """Crear connexió a PostgreSQL"""
-        return psycopg2.connect(self.database_url)
+        """Crear connexió a PostgreSQL amb timezone correcte"""
+        conn = psycopg2.connect(self.database_url)
+        cursor = conn.cursor()
+        cursor.execute("SET timezone TO 'Europe/Madrid'")
+        cursor.close()
+        return conn
     
     def ensure_tables_exist(self):
         """
@@ -1132,7 +1136,12 @@ class ConversationManager:
         self.database_url = os.getenv('DATABASE_URL')
     
     def get_connection(self):
-        return psycopg2.connect(self.database_url)
+        """Crear connexió a PostgreSQL amb timezone correcte"""
+        conn = psycopg2.connect(self.database_url)
+        cursor = conn.cursor()
+        cursor.execute("SET timezone TO 'Europe/Madrid'")
+        cursor.close()
+        return conn
     
     def clean_old_messages(self):
         """Eliminar missatges de més de 15 dies de TOTS els usuaris"""

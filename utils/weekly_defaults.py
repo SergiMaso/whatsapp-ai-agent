@@ -19,7 +19,12 @@ class WeeklyDefaultsManager:
         self.ensure_table_exists()
     
     def get_connection(self):
-        return psycopg2.connect(self.database_url)
+        """Crear connexió a PostgreSQL amb timezone correcte"""
+        conn = psycopg2.connect(self.database_url)
+        cursor = conn.cursor()
+        cursor.execute("SET timezone TO 'Europe/Madrid'")
+        cursor.close()
+        return conn
     
     def ensure_table_exists(self):
         """Crear taula weekly_defaults si no existeix"""
