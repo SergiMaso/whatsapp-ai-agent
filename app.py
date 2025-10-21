@@ -638,10 +638,27 @@ def get_customers():
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT phone, name, language, visit_count, last_visit
-            FROM customers
-            WHERE name != 'TEMP'
-            ORDER BY visit_count DESC, last_visit DESC
+            SELECT 
+                c.phone, 
+                c.name, 
+                c.language, 
+                c.visit_count, 
+                c.last_visit,
+                CASE 
+                    WHEN EXISTS (
+                        SELECT 1 FROM appointments a 
+                        WHERE a.phone = c.phone 
+                        AND a.date = CURRENT_DATE 
+                        AND a.status = 'confirmed'
+                    ) THEN 1 
+                    ELSE 0 
+                END as has_reservation_today
+            FROM customers c
+            WHERE c.name != 'TEMP'
+            ORDER BY 
+                has_reservation_today DESC,  -- Primer: amb reserva avui
+                c.visit_count DESC,          -- Segon: més visites
+                c.last_visit DESC            -- Tercer: més recents
         """)
         
         customers = []
@@ -651,7 +668,8 @@ def get_customers():
                 'name': row[1],
                 'language': row[2],
                 'visit_count': row[3],
-                'last_visit': row[4].isoformat() if row[4] else None
+                'last_visit': row[4].isoformat() if row[4] else None,
+                'has_reservation_today': bool(row[5])  # Nou camp
             })
         
         cursor.close()
