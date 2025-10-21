@@ -649,14 +649,14 @@ def get_customers():
                         SELECT 1 FROM appointments a 
                         WHERE a.phone = c.phone 
                         AND a.date = CURRENT_DATE 
-                        AND a.status = 'confirmed'
+                        AND a.status IN ('confirmed', 'completed')
                     ) THEN 1 
                     ELSE 0 
                 END as has_reservation_today
             FROM customers c
             WHERE c.name != 'TEMP'
             ORDER BY 
-                has_reservation_today DESC,  -- Primer: amb reserva avui
+                has_reservation_today DESC,  -- Primer: amb reserva avui (confirmed o completed)
                 c.visit_count DESC,          -- Segon: més visites
                 c.last_visit DESC            -- Tercer: més recents
         """)
@@ -669,7 +669,7 @@ def get_customers():
                 'language': row[2],
                 'visit_count': row[3],
                 'last_visit': row[4].isoformat() if row[4] else None,
-                'has_reservation_today': bool(row[5])  # Nou camp
+                'has_reservation_today': bool(row[5])
             })
         
         cursor.close()
