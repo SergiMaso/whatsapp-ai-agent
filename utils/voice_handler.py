@@ -117,7 +117,7 @@ class VoiceHandler:
             action='/voice/process',
             method='POST',
             language=lang_code,
-            timeout=2,
+            timeout=3,
             speech_timeout='auto',
             profanity_filter=False
         )
