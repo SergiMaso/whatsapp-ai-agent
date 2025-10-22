@@ -12,6 +12,7 @@ import base64
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from utils.media_manager import MediaManager
+from utils.voice_handler import VoiceHandler
 
 load_dotenv()
 
@@ -33,6 +34,7 @@ appointment_manager = AppointmentManager()
 conversation_manager = ConversationManager()
 weekly_defaults_manager = WeeklyDefaultsManager()
 media_manager = MediaManager()
+voice_handler = VoiceHandler()
 
 # Configuració per pujada d'arxius
 UPLOAD_FOLDER = '/tmp/uploads'
@@ -1572,6 +1574,317 @@ def delete_customer_api(phone):
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+    
+
+
+# ========================================
+# ENDPOINTS DE VEU (afegir abans del if __name__ == '__main__')
+# ========================================
+
+@app.route('/voice', methods=['POST'])
+def voice_webhook():
+    """
+    📞 Endpoint inicial quan es rep una trucada telefònica
+    """
+    print("📞 [VOICE] Trucada rebuda!")
+    
+    try:
+        phone = request.values.get('From', '')
+        call_sid = request.values.get('CallSid', '')
+        
+        print(f"📞 [VOICE] De: {phone}, CallSid: {call_sid}")
+        
+        # Netejar prefix si té
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        # Obtenir idioma del client si el coneixem
+        language = appointment_manager.get_customer_language(clean_phone)
+        if not language:
+            language = 'es'  # Default a espanyol si no el coneixem
+        
+        print(f"📞 [VOICE] Idioma detectat: {language}")
+        
+        # Crear resposta inicial
+        response = voice_handler.create_initial_response(language)
+        
+        return str(response)
+    
+    except Exception as e:
+        print(f"❌ [VOICE] Error en voice_webhook: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Resposta d'error genèrica
+        from twilio.twiml.voice_response import VoiceResponse
+        response = VoiceResponse()
+        response.say(
+            "Lo siento, ha ocurrido un error. Por favor, intenta llamar de nuevo más tarde.",
+            language='es-ES',
+            voice='Polly.Lucia'
+        )
+        response.hangup()
+        return str(response)
+
+
+@app.route('/voice/process', methods=['POST'])
+def voice_process():
+    """
+    🎤 Processa el que ha dit l'usuari durant la trucada
+    Aquest endpoint es crida després que Twilio hagi gravat la veu
+    """
+    print("🎤 [VOICE] Processant gravació...")
+    
+    try:
+        phone = request.values.get('From', '')
+        call_sid = request.values.get('CallSid', '')
+        recording_url = request.values.get('RecordingUrl', '')
+        recording_sid = request.values.get('RecordingSid', '')
+        
+        print(f"🎤 [VOICE] De: {phone}")
+        print(f"🎤 [VOICE] RecordingUrl: {recording_url}")
+        
+        # IMPORTANT: Twilio enviarà la transcripció a /voice/transcription
+        # Però també podem obtenir-la aquí si existeix
+        transcription = request.values.get('TranscriptionText', '')
+        
+        if transcription:
+            print(f"📝 [VOICE] Transcripció rebuda immediatament: '{transcription}'")
+            
+            # Processar directament
+            response = voice_handler.process_transcription(
+                transcription,
+                phone,
+                call_sid
+            )
+            
+            return str(response)
+        else:
+            print("⏳ [VOICE] Esperant transcripció asíncrona...")
+            
+            # Si no tenim transcripció encara, esperar
+            # Twilio enviarà la transcripció a /voice/transcription
+            # Mentrestant, fem una pausa
+            from twilio.twiml.voice_response import VoiceResponse
+            response = VoiceResponse()
+            response.pause(length=2)
+            
+            # Redirigir a sí mateix per comprovar de nou
+            response.redirect('/voice/check-transcription?call_sid=' + call_sid)
+            
+            return str(response)
+    
+    except Exception as e:
+        print(f"❌ [VOICE] Error en voice_process: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return str(voice_handler.create_error_response())
+
+
+@app.route('/voice/transcription', methods=['POST'])
+def voice_transcription():
+    """
+    📝 Callback que rep la transcripció de Twilio de manera asíncrona
+    """
+    print("📝 [VOICE] Callback de transcripció rebut!")
+    
+    try:
+        transcription = request.values.get('TranscriptionText', '')
+        phone = request.values.get('From', '')
+        call_sid = request.values.get('CallSid', '')
+        transcription_sid = request.values.get('TranscriptionSid', '')
+        
+        print(f"📝 [VOICE] Transcripció: '{transcription}'")
+        print(f"📝 [VOICE] De: {phone}")
+        print(f"📝 [VOICE] CallSid: {call_sid}")
+        
+        if not transcription or transcription.strip() == '':
+            print("⚠️  [VOICE] Transcripció buida!")
+            return jsonify({'status': 'empty'}), 200
+        
+        # Processar la transcripció
+        response = voice_handler.process_transcription(
+            transcription,
+            phone,
+            call_sid
+        )
+        
+        # Guardar resposta per poder-la servir després
+        # (opcional: usar Redis o memòria per trucades actives)
+        
+        return jsonify({'status': 'processed'}), 200
+    
+    except Exception as e:
+        print(f"❌ [VOICE] Error en voice_transcription: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/voice/status', methods=['POST'])
+def voice_status():
+    """
+    📊 Callback d'estat de la trucada (opcional)
+    """
+    call_status = request.values.get('CallStatus', '')
+    phone = request.values.get('From', '')
+    call_sid = request.values.get('CallSid', '')
+    
+    print(f"📊 [VOICE] Estat de trucada: {call_status}")
+    print(f"📊 [VOICE] De: {phone}, CallSid: {call_sid}")
+    
+    if call_status == 'completed':
+        print(f"✅ [VOICE] Trucada completada: {call_sid}")
+    elif call_status == 'failed':
+        print(f"❌ [VOICE] Trucada fallida: {call_sid}")
+    elif call_status == 'busy':
+        print(f"📵 [VOICE] Número ocupat: {phone}")
+    elif call_status == 'no-answer':
+        print(f"📵 [VOICE] No ha respost: {phone}")
+    
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.route('/voice/hangup', methods=['POST'])
+def voice_hangup():
+    """
+    👋 Gestiona quan es penja la trucada
+    """
+    phone = request.values.get('From', '')
+    call_sid = request.values.get('CallSid', '')
+    call_duration = request.values.get('CallDuration', '0')
+    
+    print(f"👋 [VOICE] Trucada penjada")
+    print(f"👋 [VOICE] De: {phone}, Duració: {call_duration}s")
+    
+    return jsonify({'status': 'ok'}), 200
+
+
+
+
+#Prova de veu
+# @app.route('/test-voice')
+# def test_voice():
+#     """
+#     🧪 Pàgina de test per provar la integració de veu
+#     """
+#     return """
+#     <!DOCTYPE html>
+#     <html>
+#     <head>
+#         <title>Test Twilio Voice</title>
+#         <style>
+#             body {
+#                 font-family: Arial, sans-serif;
+#                 max-width: 800px;
+#                 margin: 50px auto;
+#                 padding: 20px;
+#             }
+#             .section {
+#                 background: #f5f5f5;
+#                 padding: 20px;
+#                 margin: 20px 0;
+#                 border-radius: 8px;
+#             }
+#             h1 { color: #333; }
+#             h2 { color: #666; }
+#             code {
+#                 background: #e0e0e0;
+#                 padding: 2px 6px;
+#                 border-radius: 3px;
+#                 font-family: monospace;
+#             }
+#             .status {
+#                 padding: 10px;
+#                 margin: 10px 0;
+#                 border-radius: 4px;
+#             }
+#             .ok { background: #d4edda; color: #155724; }
+#             .info { background: #d1ecf1; color: #0c5460; }
+#         </style>
+#     </head>
+#     <body>
+#         <h1>📞 Twilio Voice Integration - Test</h1>
+        
+#         <div class="section">
+#             <h2>✅ Status</h2>
+#             <div class="status ok">
+#                 ✓ Backend actiu i preparat per rebre trucades
+#             </div>
+#             <div class="status info">
+#                 ℹ️ VoiceHandler inicialitzat correctament
+#             </div>
+#         </div>
+        
+#         <div class="section">
+#             <h2>🔧 Configuració de Twilio</h2>
+#             <p>Per activar les trucades telefòniques, configura aquests webhooks a la teva consola de Twilio:</p>
+#             <ol>
+#                 <li>Ves a <strong>Twilio Console → Phone Numbers → Manage → Active Numbers</strong></li>
+#                 <li>Selecciona el teu número de telèfon</li>
+#                 <li>A la secció <strong>Voice & Fax</strong>, configura:</li>
+#             </ol>
+#             <ul>
+#                 <li><strong>A CALL COMES IN:</strong> Webhook → <code>https://teu-domini.com/voice</code> (POST)</li>
+#                 <li><strong>CALL STATUS CHANGES:</strong> <code>https://teu-domini.com/voice/status</code> (POST)</li>
+#             </ul>
+#         </div>
+        
+#         <div class="section">
+#             <h2>📋 Endpoints disponibles</h2>
+#             <ul>
+#                 <li><code>POST /voice</code> - Endpoint inicial (trucada entrant)</li>
+#                 <li><code>POST /voice/process</code> - Processa gravacions</li>
+#                 <li><code>POST /voice/transcription</code> - Rep transcripcions</li>
+#                 <li><code>POST /voice/status</code> - Estat de trucades</li>
+#                 <li><code>POST /voice/hangup</code> - Quan es penja</li>
+#             </ul>
+#         </div>
+        
+#         <div class="section">
+#             <h2>🎤 Funcionament</h2>
+#             <ol>
+#                 <li>Client truca al número de Twilio</li>
+#                 <li>Twilio envia webhook a <code>/voice</code></li>
+#                 <li>Bot saluda i comença a escoltar</li>
+#                 <li>Client parla (màx 30 segons)</li>
+#                 <li>Després de 4 segons de silenci, Twilio transcriu</li>
+#                 <li>Transcripció s'envia a <code>/voice/transcription</code></li>
+#                 <li>IA processa i genera resposta</li>
+#                 <li>Bot respon amb veu natural (TTS)</li>
+#                 <li>Pregunta "Alguna cosa més?"</li>
+#                 <li>Loop continua fins que client diu adéu</li>
+#             </ol>
+#         </div>
+        
+#         <div class="section">
+#             <h2>🌍 Idiomes suportats</h2>
+#             <ul>
+#                 <li>🇪🇸 Espanyol (Polly.Lucia)</li>
+#                 <li>🇪🇸 Català (Polly.Arlet)</li>
+#                 <li>🇬🇧 Anglès (Polly.Joanna)</li>
+#             </ul>
+#             <p>L'idioma es detecta automàticament segons el client o el contingut de la conversa.</p>
+#         </div>
+        
+#         <div class="section">
+#             <h2>💰 Costos estimats (Twilio)</h2>
+#             <ul>
+#                 <li>Trucades entrants: ~0.01€/minut</li>
+#                 <li>Transcripció: ~0.05€/minut</li>
+#                 <li>Text-to-Speech: ~0.04€/1000 caràcters</li>
+#                 <li><strong>Total estimat:</strong> ~0.10€/minut de conversa</li>
+#             </ul>
+#         </div>
+        
+#         <p style="margin-top: 40px; color: #666; text-align: center;">
+#             Sistema preparat per rebre trucades! 🚀
+#         </p>
+#     </body>
+#     </html>
+#     """
+
+
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
