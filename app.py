@@ -1624,82 +1624,31 @@ def voice_webhook():
         )
         response.hangup()
         return str(response)
+    
+
 
 @app.route('/voice/process', methods=['POST'])
 def voice_process():
-    """
-    🎤 Processa el que ha dit l'usuari durant la trucada
-    """
-    print("🎤 [VOICE] Processant gravació...")
+    print("🎤 [VOICE] Processant entrada...")
     
     try:
         phone = request.values.get('From', '')
         call_sid = request.values.get('CallSid', '')
-        recording_url = request.values.get('RecordingUrl', '')
+        speech_result = request.values.get('SpeechResult', '')  # Ja transcrit!
         
         print(f"🎤 [VOICE] De: {phone}")
-        print(f"🎤 [VOICE] RecordingUrl: {recording_url}")
+        print(f"🗣️  [VOICE] Text: '{speech_result}'")
         
-        # Agafar la gravació i transcriure-la amb Whisper
-        if recording_url:
-            print(f"🎧 [VOICE] Descarregant gravació...")
-            
-            # Descarregar l'àudio
-            import requests as req
-            from twilio.rest import Client
-            
-            client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
-            recording = client.recordings(recording_url.split('/')[-1]).fetch()
-            audio_url = f"https://api.twilio.com{recording.uri.replace('.json', '.mp3')}"
-            
-            print(f"🎧 [VOICE] URL àudio: {audio_url}")
-            
-            # Descarregar
-            auth = (os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
-            audio_response = req.get(audio_url, auth=auth)
-            
-            if audio_response.status_code == 200:
-                # Guardar temporalment
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
-                    tmp.write(audio_response.content)
-                    audio_path = tmp.name
-                
-                print(f"💾 [VOICE] Àudio guardat a: {audio_path}")
-                
-                # Transcriure amb Whisper (OpenAI)
-                from openai import OpenAI
-                openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-                
-                with open(audio_path, 'rb') as audio_file:
-                    transcription = openai_client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file,
-                        language="es"  # o detectar automàticament
-                    )
-                
-                text = transcription.text
-                print(f"📝 [VOICE] Transcripció Whisper: '{text}'")
-                
-                # Netejar fitxer temporal
-                import os as os_module
-                os_module.unlink(audio_path)
-                
-                # Processar amb IA
-                response = voice_handler.process_transcription(text, phone, call_sid)
-                return str(response)
-            else:
-                print(f"❌ [VOICE] Error descarregant àudio: {audio_response.status_code}")
-                return str(voice_handler.create_error_response())
+        if speech_result:
+            response = voice_handler.process_transcription(speech_result, phone, call_sid)
+            return str(response)
         else:
-            print("⚠️  [VOICE] No hi ha RecordingUrl")
             return str(voice_handler.create_error_response())
     
     except Exception as e:
-        print(f"❌ [VOICE] Error en voice_process: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ [VOICE] Error: {e}")
         return str(voice_handler.create_error_response())
+
 
 
 @app.route('/voice/transcription', methods=['POST'])

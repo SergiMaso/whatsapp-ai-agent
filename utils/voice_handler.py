@@ -102,44 +102,31 @@ class VoiceHandler:
     def create_initial_response(self, language='es'):
         print(f"📞 [VOICE_HANDLER] Creant resposta inicial (idioma: {language})")
         
-        # Guardar idioma original
-        original_language = language
-        
-        # Twilio no suporta català per reconeixement de veu, usar espanyol
         if language == 'ca':
-            print("⚠️  [VOICE_HANDLER] Català no suportat per Twilio, usant es-ES per reconeixement")
-            language = 'es'
+            language = 'es'  # Twilio no suporta català
         
         response = VoiceResponse()
         
-        # Usar salutació en idioma ORIGINAL (català si correspon)
-        greeting = self.GREETINGS.get(original_language, self.GREETINGS['es'])
-        voice = self.get_voice_for_language(original_language)
-        
-        # Però usar lang_code espanyol per a Twilio
+        greeting = self.GREETINGS.get(language, self.GREETINGS['es'])
+        voice = self.get_voice_for_language(language)
         lang_code = self.get_language_code(language)
         
-        print(f"💬 [VOICE_HANDLER] Salutació: '{greeting}'")
-        
-        response.say(greeting, language='ca-ES' if original_language == 'ca' else lang_code, voice=voice)
-        
-        response.pause(length=1)
-        print("⏸️  [VOICE_HANDLER] Pausa d'1 segon afegida")
-        
-        print("🎤 [VOICE_HANDLER] Configurant gravació...")
-        response.record(
+        # Usar Gather (més ràpid que Record)
+        gather = response.gather(
+            input='speech',
             action='/voice/process',
             method='POST',
-            max_length=30,
-            timeout=5,
-            play_beep=False,
-            finish_on_key='#'
+            language=lang_code,
+            timeout=2,
+            speech_timeout='auto',
+            profanity_filter=False
         )
         
-        response.say("", language=lang_code, voice=voice)
+        gather.say(greeting, language=lang_code, voice=voice)
         
-        twiml = str(response)
-        print(f"📋 [VOICE_HANDLER] TwiML generat:\n{twiml}")
+        # Si no respon
+        response.say("No t'he sentit. Adéu!", language=lang_code, voice=voice)
+        response.hangup()
         
         return response
         
