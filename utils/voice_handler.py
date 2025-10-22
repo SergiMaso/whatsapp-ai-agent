@@ -114,23 +114,25 @@ class VoiceHandler:
         response.pause(length=1)
         print("⏸️  [VOICE_HANDLER] Pausa d'1 segon afegida")
         
-        # Començar a escoltar
-        print("🎤 [VOICE_HANDLER] Configurant gravació amb transcripció...")
+        # Començar a escoltar - SEN transcribeCallback per ara
+        print("🎤 [VOICE_HANDLER] Configurant gravació...")
         response.record(
             action='/voice/process',
             method='POST',
             max_length=30,
-            timeout=30,
-            transcribe=True,
-            transcribeCallback='/voice/transcription',
+            timeout=5,
             play_beep=False,
             finish_on_key='#'
         )
+        
+        # IMPORTANT: Mantenir trucada viva
+        response.say("", language=lang_code, voice=voice)
         
         twiml = str(response)
         print(f"📋 [VOICE_HANDLER] TwiML generat:\n{twiml}")
         
         return response
+        
     
     def create_response_and_continue(self, ai_text, language, phone, should_continue=True):
         print(f"🤖 [VOICE_HANDLER] Creant resposta amb text IA: '{ai_text[:100]}...'")
