@@ -120,7 +120,7 @@ class VoiceHandler:
             action='/voice/process',
             method='POST',
             max_length=30,
-            timeout=5,
+            timeout=30,
             transcribe=True,
             transcribeCallback='/voice/transcription',
             play_beep=False,
