@@ -116,16 +116,15 @@ class VoiceHandler:
         # Salutació inicial
         response.say(greeting, language=lang_code, voice=voice)
         
-        # Començar a escoltar
+        # Començar a escoltar (sense transcribe_callback, Twilio ho gestiona auto)
         response.record(
             action='/voice/process',
             method='POST',
-            max_length=30,  # Màxim 30 segons per resposta
-            timeout=4,  # Si 4 segons de silenci → processa
+            max_length=30,
+            timeout=4,
             transcribe=True,
-            transcribe_callback='/voice/transcription',
-            play_beep=False,  # Sense beep per fer-ho més natural
-            trim='trim-silence'  # Eliminar silencis al principi/final
+            play_beep=False,
+            trim='trim-silence'
         )
         
         return response
@@ -133,12 +132,6 @@ class VoiceHandler:
     def create_response_and_continue(self, ai_text, language, phone, should_continue=True):
         """
         Crea una resposta de veu i continua escoltant
-        
-        Args:
-            ai_text: Text de resposta de la IA
-            language: Idioma del client
-            phone: Telèfon del client
-            should_continue: Si cal continuar la conversa
         """
         response = VoiceResponse()
         
@@ -160,7 +153,6 @@ class VoiceHandler:
                 max_length=30,
                 timeout=4,
                 transcribe=True,
-                transcribe_callback='/voice/transcription',
                 play_beep=False,
                 trim='trim-silence'
             )
@@ -175,14 +167,6 @@ class VoiceHandler:
     def process_transcription(self, transcription, phone, call_sid=None):
         """
         Processa la transcripció i genera resposta
-        
-        Args:
-            transcription: Text transcrit del que ha dit l'usuari
-            phone: Número de telèfon
-            call_sid: ID de la trucada (opcional)
-            
-        Returns:
-            VoiceResponse object
         """
         
         # Si no hi ha transcripció vàlida
@@ -197,7 +181,6 @@ class VoiceHandler:
         # Obtenir idioma del client
         language = self.appointment_manager.get_customer_language(clean_phone)
         if not language:
-            # Si és nou, detectarem l'idioma en process_message_with_ai
             language = 'es'  # Default
         
         # Detectar si vol acabar la conversa
@@ -265,7 +248,6 @@ class VoiceHandler:
             max_length=30,
             timeout=4,
             transcribe=True,
-            transcribe_callback='/voice/transcription',
             play_beep=False,
             trim='trim-silence'
         )
@@ -284,7 +266,7 @@ class VoiceHandler:
         timeout_messages = {
             'ca': "Sembla que no t'he sentit. Si vols continuar, torna a trucar. Adeu!",
             'es': "Parece que no te he escuchado. Si quieres continuar, vuelve a llamar. ¡Adiós!",
-            'en': "It seems I didn't hear you. If you want to continue, call back. Goodbye!"
+            'en": "It seems I didn't hear you. If you want to continue, call back. Goodbye!"
         }
         
         timeout_msg = timeout_messages.get(language, timeout_messages['es'])
