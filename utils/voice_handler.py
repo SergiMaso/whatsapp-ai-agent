@@ -101,20 +101,31 @@ class VoiceHandler:
     
     def create_initial_response(self, language='es'):
         print(f"📞 [VOICE_HANDLER] Creant resposta inicial (idioma: {language})")
+        
+        # Guardar idioma original
+        original_language = language
+        
+        # Twilio no suporta català per reconeixement de veu, usar espanyol
+        if language == 'ca':
+            print("⚠️  [VOICE_HANDLER] Català no suportat per Twilio, usant es-ES per reconeixement")
+            language = 'es'
+        
         response = VoiceResponse()
         
-        greeting = self.GREETINGS.get(language, self.GREETINGS['es'])
-        voice = self.get_voice_for_language(language)
+        # Usar salutació en idioma ORIGINAL (català si correspon)
+        greeting = self.GREETINGS.get(original_language, self.GREETINGS['es'])
+        voice = self.get_voice_for_language(original_language)
+        
+        # Però usar lang_code espanyol per a Twilio
         lang_code = self.get_language_code(language)
         
         print(f"💬 [VOICE_HANDLER] Salutació: '{greeting}'")
-        response.say(greeting, language=lang_code, voice=voice)
         
-        # Pausa després de saludar
+        response.say(greeting, language='ca-ES' if original_language == 'ca' else lang_code, voice=voice)
+        
         response.pause(length=1)
         print("⏸️  [VOICE_HANDLER] Pausa d'1 segon afegida")
         
-        # Començar a escoltar - SEN transcribeCallback per ara
         print("🎤 [VOICE_HANDLER] Configurant gravació...")
         response.record(
             action='/voice/process',
@@ -125,7 +136,6 @@ class VoiceHandler:
             finish_on_key='#'
         )
         
-        # IMPORTANT: Mantenir trucada viva
         response.say("", language=lang_code, voice=voice)
         
         twiml = str(response)
