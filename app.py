@@ -1625,12 +1625,10 @@ def voice_webhook():
         response.hangup()
         return str(response)
 
-
 @app.route('/voice/process', methods=['POST'])
 def voice_process():
     """
     🎤 Processa el que ha dit l'usuari durant la trucada
-    Aquest endpoint es crida després que Twilio hagi gravat la veu
     """
     print("🎤 [VOICE] Processant gravació...")
     
@@ -1638,46 +1636,69 @@ def voice_process():
         phone = request.values.get('From', '')
         call_sid = request.values.get('CallSid', '')
         recording_url = request.values.get('RecordingUrl', '')
-        recording_sid = request.values.get('RecordingSid', '')
         
         print(f"🎤 [VOICE] De: {phone}")
         print(f"🎤 [VOICE] RecordingUrl: {recording_url}")
         
-        # IMPORTANT: Twilio enviarà la transcripció a /voice/transcription
-        # Però també podem obtenir-la aquí si existeix
-        transcription = request.values.get('TranscriptionText', '')
-        
-        if transcription:
-            print(f"📝 [VOICE] Transcripció rebuda immediatament: '{transcription}'")
+        # Agafar la gravació i transcriure-la amb Whisper
+        if recording_url:
+            print(f"🎧 [VOICE] Descarregant gravació...")
             
-            # Processar directament
-            response = voice_handler.process_transcription(
-                transcription,
-                phone,
-                call_sid
-            )
+            # Descarregar l'àudio
+            import requests as req
+            from twilio.rest import Client
             
-            return str(response)
+            client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+            recording = client.recordings(recording_url.split('/')[-1]).fetch()
+            audio_url = f"https://api.twilio.com{recording.uri.replace('.json', '.mp3')}"
+            
+            print(f"🎧 [VOICE] URL àudio: {audio_url}")
+            
+            # Descarregar
+            auth = (os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+            audio_response = req.get(audio_url, auth=auth)
+            
+            if audio_response.status_code == 200:
+                # Guardar temporalment
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+                    tmp.write(audio_response.content)
+                    audio_path = tmp.name
+                
+                print(f"💾 [VOICE] Àudio guardat a: {audio_path}")
+                
+                # Transcriure amb Whisper (OpenAI)
+                from openai import OpenAI
+                openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                
+                with open(audio_path, 'rb') as audio_file:
+                    transcription = openai_client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        language="es"  # o detectar automàticament
+                    )
+                
+                text = transcription.text
+                print(f"📝 [VOICE] Transcripció Whisper: '{text}'")
+                
+                # Netejar fitxer temporal
+                import os as os_module
+                os_module.unlink(audio_path)
+                
+                # Processar amb IA
+                response = voice_handler.process_transcription(text, phone, call_sid)
+                return str(response)
+            else:
+                print(f"❌ [VOICE] Error descarregant àudio: {audio_response.status_code}")
+                return str(voice_handler.create_error_response())
         else:
-            print("⏳ [VOICE] Esperant transcripció asíncrona...")
-            
-            # Si no tenim transcripció encara, esperar
-            # Twilio enviarà la transcripció a /voice/transcription
-            # Mentrestant, fem una pausa
-            from twilio.twiml.voice_response import VoiceResponse
-            response = VoiceResponse()
-            response.pause(length=2)
-            
-            # Redirigir a sí mateix per comprovar de nou
-            response.redirect('/voice/check-transcription?call_sid=' + call_sid)
-            
-            return str(response)
+            print("⚠️  [VOICE] No hi ha RecordingUrl")
+            return str(voice_handler.create_error_response())
     
     except Exception as e:
         print(f"❌ [VOICE] Error en voice_process: {e}")
         import traceback
         traceback.print_exc()
-        
         return str(voice_handler.create_error_response())
 
 
