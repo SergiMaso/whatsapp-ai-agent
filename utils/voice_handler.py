@@ -266,7 +266,7 @@ class VoiceHandler:
         timeout_messages = {
             'ca': "Sembla que no t'he sentit. Si vols continuar, torna a trucar. Adeu!",
             'es': "Parece que no te he escuchado. Si quieres continuar, vuelve a llamar. ¡Adiós!",
-            'en": "It seems I didn't hear you. If you want to continue, call back. Goodbye!"
+            'en': "It seems I didn't hear you. If you want to continue, call back. Goodbye!"
         }
         
         timeout_msg = timeout_messages.get(language, timeout_messages['es'])
