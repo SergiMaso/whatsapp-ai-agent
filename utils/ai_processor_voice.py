@@ -8,26 +8,201 @@ from datetime import datetime
 
 load_dotenv()
 
-# Configurar logger específic per voice
+# Configurar logger especÃ­fic per voice
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def format_date_natural(date_str, language='es'):
+    """
+    Converteix una data en format YYYY-MM-DD a format natural parlat.
+    
+    Exemples:
+    - 2025-10-24 → "jueves 24 de octubre" (es)
+    - 2025-10-24 → "dijous 24 d'octubre" (ca)
+    - 2025-10-24 → "Thursday, October 24th" (en)
+    """
+    try:
+        if isinstance(date_str, str):
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        else:
+            date_obj = date_str
+        
+        day_names = {
+            'ca': ['dilluns', 'dimarts', 'dimecres', 'dijous', 'divendres', 'dissabte', 'diumenge'],
+            'es': ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'],
+            'en': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        }
+        
+        month_names = {
+            'ca': ['gener', 'febrer', 'març', 'abril', 'maig', 'juny', 
+                   'juliol', 'agost', 'setembre', 'octubre', 'novembre', 'desembre'],
+            'es': ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'],
+            'en': ['January', 'February', 'March', 'April', 'May', 'June',
+                   'July', 'August', 'September', 'October', 'November', 'December']
+        }
+        
+        day_name = day_names.get(language, day_names['es'])[date_obj.weekday()]
+        month_name = month_names.get(language, month_names['es'])[date_obj.month - 1]
+        day_num = date_obj.day
+        
+        if language == 'ca':
+            # "dijous 24 d'octubre"
+            if month_name[0] in 'aeiouàèéíòóú':
+                return f"{day_name} {day_num} d'{month_name}"
+            else:
+                return f"{day_name} {day_num} de {month_name}"
+        elif language == 'es':
+            # "jueves 24 de octubre"
+            return f"{day_name} {day_num} de {month_name}"
+        else:  # en
+            # "Thursday, October 24th"
+            suffix = 'th'
+            if day_num in [1, 21, 31]:
+                suffix = 'st'
+            elif day_num in [2, 22]:
+                suffix = 'nd'
+            elif day_num in [3, 23]:
+                suffix = 'rd'
+            return f"{day_name}, {month_name} {day_num}{suffix}"
+    except Exception as e:
+        logger.error(f"Error formatant data: {e}")
+        return date_str
+
+
+def format_time_natural(time_str, language='es'):
+    """
+    Converteix una hora en format HH:MM a format natural parlat.
+    
+    Exemples:
+    - 14:00 → "2 de la tarde" (es), "2 del migdia" (ca), "2 PM" (en)
+    - 14:30 → "2 y media de la tarde" (es), "2 i mitja" (ca), "2:30 PM" (en)
+    - 12:00 → "12 del mediodía" (es), "12 del migdia" (ca), "12 noon" (en)
+    """
+    try:
+        if isinstance(time_str, str):
+            hour, minute = map(int, time_str.split(':'))
+        else:
+            hour = time_str.hour
+            minute = time_str.minute
+        
+        # Casos especials per :00 (en punt)
+        if minute == 0:
+            if language == 'ca':
+                if hour == 0:
+                    return "12 de la nit"
+                elif hour == 12:
+                    return "12 del migdia"
+                elif hour < 12:
+                    return f"{hour} del matí"
+                elif hour < 15:
+                    return f"{hour - 12} del migdia"
+                elif hour < 19:
+                    return f"{hour - 12} de la tarda"
+                else:
+                    return f"{hour - 12} de la nit"
+            elif language == 'es':
+                if hour == 0:
+                    return "12 de la noche"
+                elif hour == 12:
+                    return "12 del mediodía"
+                elif hour == 1:
+                    return "1 de la madrugada"
+                elif hour < 12:
+                    return f"{hour} de la mañana"
+                elif hour < 15:
+                    return f"{hour - 12} del mediodía"
+                elif hour < 19:
+                    return f"{hour - 12} de la tarde"
+                else:
+                    return f"{hour - 12} de la noche"
+            else:  # en
+                if hour == 0:
+                    return "12 AM"
+                elif hour == 12:
+                    return "12 PM"
+                elif hour < 12:
+                    return f"{hour} AM"
+                else:
+                    return f"{hour - 12} PM"
+        
+        # Casos amb minuts
+        elif minute == 30:
+            # "i mitja" / "y media"
+            if language == 'ca':
+                if hour < 12:
+                    return f"{hour} i mitja del matí"
+                elif hour == 12:
+                    return "12 i mitja del migdia"
+                elif hour < 15:
+                    return f"{hour - 12} i mitja del migdia"
+                elif hour < 19:
+                    return f"{hour - 12} i mitja de la tarda"
+                else:
+                    return f"{hour - 12} i mitja de la nit"
+            elif language == 'es':
+                if hour < 12:
+                    return f"{hour} y media de la mañana"
+                elif hour == 12:
+                    return "12 y media del mediodía"
+                elif hour < 15:
+                    return f"{hour - 12} y media del mediodía"
+                elif hour < 19:
+                    return f"{hour - 12} y media de la tarde"
+                else:
+                    return f"{hour - 12} y media de la noche"
+            else:  # en
+                if hour < 12:
+                    return f"{hour}:30 AM"
+                elif hour == 12:
+                    return "12:30 PM"
+                else:
+                    return f"{hour - 12}:30 PM"
+        
+        else:
+            # Altres minuts - format més breu
+            if language == 'ca':
+                if hour < 12:
+                    return f"{hour} i {minute:02d}"
+                elif hour == 12:
+                    return f"12 i {minute:02d}"
+                else:
+                    return f"{hour - 12} i {minute:02d}"
+            elif language == 'es':
+                if hour < 12:
+                    return f"{hour} y {minute:02d}"
+                elif hour == 12:
+                    return f"12 y {minute:02d}"
+                else:
+                    return f"{hour - 12} y {minute:02d}"
+            else:  # en
+                if hour < 12:
+                    return f"{hour}:{minute:02d} AM"
+                elif hour == 12:
+                    return f"12:{minute:02d} PM"
+                else:
+                    return f"{hour - 12}:{minute:02d} PM"
+    except Exception as e:
+        logger.error(f"Error formatant hora: {e}")
+        return time_str
+
+
 def process_voice_with_ai(message, phone, appointment_manager, conversation_manager):
     """
-    Processador SIMPLIFICAT per veu - optimitzat per latència mínima
+    Processador SIMPLIFICAT per veu - optimitzat per latÃ¨ncia mÃ­nima
     
-    DIFERÈNCIES amb WhatsApp:
-    - Historial mínim (3 missatges vs 10)
-    - Sense gestió d'estats complexos (WAITING_NOTES, WAITING_MENU)
+    DIFERÃˆNCIES amb WhatsApp:
+    - Historial mÃ­nim (3 missatges vs 10)
+    - Sense gestiÃ³ d'estats complexos (WAITING_NOTES, WAITING_MENU)
     - Respostes curtes i directes
-    - Idioma només a l'inici (no re-detectat)
+    - Idioma nomÃ©s a l'inici (no re-detectat)
     """
-    # ⏱️ INICI - Timing total
+    # INICI - Timing total
     start_time_total = time.time()
     logger.info("=" * 80)
-    logger.info(f"🎤 [VOICE] INICI processament | Phone: {phone}")
-    logger.info(f"📝 [VOICE] Missatge: '{message[:100]}...'")
+    logger.info(f" [VOICE] INICI processament | Phone: {phone}")
+    logger.info(f" [VOICE] Missatge: '{message[:100]}...'")
     
     # Netejar prefixos del telèfon
     if phone.startswith('whatsapp:'):
@@ -41,15 +216,15 @@ def process_voice_with_ai(message, phone, appointment_manager, conversation_mana
     language = appointment_manager.get_customer_language(phone) or 'es'
     
     elapsed_language = time.time() - start_time_language
-    logger.info(f"⏱️  [VOICE] Idioma obtingut en {elapsed_language:.3f}s: {language}")
+    logger.info(f"  [VOICE] Idioma obtingut en {elapsed_language:.3f}s: {language}")
 
-    # --- STEP 2: Historial MÍNIM (només 3 últims missatges) ---
+    # --- STEP 2: Historial MÃNIM (nomÃ©s 3 Ãºltims missatges) ---
     start_time_history = time.time()
     
     history = conversation_manager.get_history(phone, limit=6)
     
     elapsed_history = time.time() - start_time_history
-    logger.info(f"⏱️  [VOICE] Historial obtingut en {elapsed_history:.3f}s ({len(history)} missatges)")
+    logger.info(f" [VOICE] Historial obtingut en {elapsed_history:.3f}s ({len(history)} missatges)")
 
     # --- STEP 3: Info del client (ràpid) ---
     start_time_customer = time.time()
@@ -57,7 +232,7 @@ def process_voice_with_ai(message, phone, appointment_manager, conversation_mana
     customer_name = appointment_manager.get_customer_name(phone)
     
     elapsed_customer = time.time() - start_time_customer
-    logger.info(f"⏱️  [VOICE] Info client en {elapsed_customer:.3f}s")
+    logger.info(f"  [VOICE] Info client en {elapsed_customer:.3f}s")
 
     # --- STEP 4: Preparar context SIMPLIFICAT ---
     today = datetime.now()
@@ -102,9 +277,9 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
     system_prompt = system_prompts.get(language, system_prompts['es'])
     
     try:
-        # --- STEP 5: Cridar OpenAI (amb model ràpid) ---
+        # --- STEP 5: Cridar OpenAI (amb model rÃ pid) ---
         start_time_openai = time.time()
-        logger.info("🤖 [VOICE] Cridant OpenAI API...")
+        logger.info("ðŸ¤– [VOICE] Cridant OpenAI API...")
         
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
@@ -114,9 +289,8 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
         
         # Usar gpt-4o-mini per rapidesa
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=messages,
-            temperature=0.7,
             max_tokens=150,  # Limitar tokens per respostes curtes
             tools=[
                 {
@@ -164,7 +338,7 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
                     "type": "function",
                     "function": {
                         "name": "cancel_appointment",
-                        "description": "Cancel·lar reserva",
+                        "description": "CancelÂ·lar reserva",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -178,7 +352,7 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
         )
         
         elapsed_openai = time.time() - start_time_openai
-        logger.info(f"⏱️  [VOICE] OpenAI resposta en {elapsed_openai:.3f}s")
+        logger.info(f"â±ï¸  [VOICE] OpenAI resposta en {elapsed_openai:.3f}s")
         
         # --- STEP 6: Processar resposta ---
         start_time_processing = time.time()
@@ -191,7 +365,7 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
             
-            logger.info(f"🔧 [VOICE] Funció cridada: {function_name}")
+            logger.info(f"ðŸ”§ [VOICE] FunciÃ³ cridada: {function_name}")
             
             if function_name == "create_appointment":
                 num_people = function_args.get('num_people', 2)
@@ -199,7 +373,7 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
                 if num_people < 1 or num_people > 8:
                     error_msgs = {
                         'es': "Lo siento, solo aceptamos de 1 a 8 personas.",
-                        'ca': "Ho sento, només acceptem d'1 a 8 persones.",
+                        'ca': "Ho sento, nomÃ©s acceptem d'1 a 8 persones.",
                         'en': "Sorry, we accept 1 to 8 people only."
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
@@ -217,11 +391,15 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
                     )
                     
                     if result:
-                        # Confirmació CURTA i DIRECTA (sense preguntes de seguiment)
+                        # Formatar data i hora de manera natural
+                        date_natural = format_date_natural(function_args['date'], language)
+                        time_natural = format_time_natural(function_args['time'], language)
+                        
+                        # ConfirmaciÃ³ CURTA i DIRECTA (sense preguntes de seguiment)
                         confirmations = {
-                            'ca': f"Reserva confirmada per {num_people} persones el {function_args['date']} a les {function_args['time']}. Ens veiem!",
-                            'es': f"Reserva confirmada para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¡Nos vemos!",
-                            'en': f"Reservation confirmed for {num_people} people on {function_args['date']} at {function_args['time']}. See you!"
+                            'ca': f"Reserva confirmada per {num_people} persones el {date_natural} a les {time_natural}. Ens veiem!",
+                            'es': f"Reserva confirmada para {num_people} personas el {date_natural} a las {time_natural}. ¡Nos vemos!",
+                            'en': f"Reservation confirmed for {num_people} people on {date_natural} at {time_natural}. See you!"
                         }
                         assistant_reply = confirmations.get(language, confirmations['es'])
                     else:
@@ -272,15 +450,18 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
                     }
                     assistant_reply = no_apts.get(language, no_apts['es'])
                 else:
-                    # Només la primera reserva (simplificat)
+                    # NomÃ©s la primera reserva (simplificat)
                     apt = appointments[0]
                     apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
-                    time_str = start_time.strftime("%H:%M")
+                    
+                    # Formatar data i hora de manera natural
+                    date_natural = format_date_natural(date, language)
+                    time_natural = format_time_natural(start_time, language)
                     
                     list_msgs = {
-                        'es': f"Tienes reserva el {date} a las {time_str} para {num_people} personas.",
-                        'ca': f"Tens reserva el {date} a les {time_str} per {num_people} persones.",
-                        'en': f"You have a reservation on {date} at {time_str} for {num_people} people."
+                        'es': f"Tienes reserva el {date_natural} a las {time_natural} para {num_people} personas.",
+                        'ca': f"Tens reserva el {date_natural} a les {time_natural} per {num_people} persones.",
+                        'en': f"You have a reservation on {date_natural} at {time_natural} for {num_people} people."
                     }
                     assistant_reply = list_msgs.get(language, list_msgs['es'])
             
@@ -291,14 +472,14 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
                 if success:
                     cancel_msgs = {
                         'es': "Reserva cancelada.",
-                        'ca': "Reserva cancel·lada.",
+                        'ca': "Reserva cancelÂ·lada.",
                         'en': "Reservation cancelled."
                     }
                     assistant_reply = cancel_msgs.get(language, cancel_msgs['es'])
                 else:
                     error_msgs = {
                         'es': "No se pudo cancelar.",
-                        'ca': "No s'ha pogut cancel·lar.",
+                        'ca': "No s'ha pogut cancelÂ·lar.",
                         'en': "Could not cancel."
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
@@ -306,22 +487,22 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
             assistant_reply = message_response.content
         
         elapsed_processing = time.time() - start_time_processing
-        logger.info(f"⏱️  [VOICE] Processament en {elapsed_processing:.3f}s")
+        logger.info(f"â±ï¸  [VOICE] Processament en {elapsed_processing:.3f}s")
         
         # Guardar a historial
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
         
         elapsed_total = time.time() - start_time_total
-        logger.info(f"✅ [VOICE] Resposta: {assistant_reply[:80]}...")
-        logger.info(f"⏱️  [VOICE] ⭐ TEMPS TOTAL: {elapsed_total:.3f}s ⭐")
+        logger.info(f"âœ… [VOICE] Resposta: {assistant_reply[:80]}...")
+        logger.info(f"â±ï¸  [VOICE] â­ TEMPS TOTAL: {elapsed_total:.3f}s â­")
         logger.info("=" * 80)
         
         return assistant_reply
     
     except Exception as e:
         elapsed_total = time.time() - start_time_total
-        logger.error(f"❌ [VOICE] ERROR després de {elapsed_total:.3f}s: {e}")
+        logger.error(f"âŒ [VOICE] ERROR desprÃ©s de {elapsed_total:.3f}s: {e}")
         import traceback
         traceback.print_exc()
         
