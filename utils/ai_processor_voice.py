@@ -1,204 +1,65 @@
 import os
 import json
-from langdetect import detect, LangDetectException
+import time
+import logging
 from dotenv import load_dotenv
 from openai import OpenAI
 from datetime import datetime
-import re
-from unidecode import unidecode
-from utils.appointments import AppointmentManager, ConversationManager
-from utils.media_manager import MediaManager
+
 load_dotenv()
 
-def detect_language(text):
-    """
-    Detecta l'idioma del text comptant coincidències amb keywords
-    Retorna l'idioma amb més paraules úniques detectades
-    """
-    try:
-        text_lower = text.lower().strip()
-        text_noaccents = unidecode(text_lower)
-        
-        words = re.findall(r"\b\w+\b", text_noaccents)
-        words_set = set(words)
+# Configurar logger específic per voice
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-        # Keywords espanyoles (sense paraules comunes amb català)
-        spanish_keywords = {
-            'quiero', 'necesito', 'puedo', 'tengo', 'hoy', 'manana',
-            'por', 'favor', 'gracias', 'buenos', 'dias', 'buenas', 'tardes',
-            'mesa', 'personas', 'comida', 'cena',
-            'estoy', 'somos', 'son', 'hacer',
-            'noche', 'tarde', 'para', 'con', 'que', 'como',
-            'cuando', 'donde', 'quien', 'cual', 'cuantos'
-        }
-        
-        # Keywords catalanes
-        catalan_keywords = {
-            'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
-            'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
-            'taula', 'persones', 'dinar', 'sopar',
-            'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
-            'estic', 'som',
-            'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar',
-            'dic', 'em', 'fer'
-        }
-        
-        # Keywords angleses
-        english_keywords = {
-            'want', 'need', 'can', 'have', 'today', 'tomorrow',
-            'please', 'thank', 'you', 'table', 'people', 'reservation',
-            'hello', 'good', 'morning', 'evening',
-            'how', 'when', 'where', 'who', 'what', 'many'
-        }
-        
-        # Comptar coincidències
-        spanish_matches = len(words_set & spanish_keywords)
-        catalan_matches = len(words_set & catalan_keywords)
-        english_matches = len(words_set & english_keywords)
-        
-        # Retornar idioma amb més coincidències
-        if catalan_matches > spanish_matches and catalan_matches > english_matches:
-            return 'ca'
-        elif spanish_matches > english_matches:
-            return 'es'
-        elif english_matches > 0:
-            return 'en'
-        
-        # Si no hi ha coincidències clares, usar langdetect
-        detected = detect(text_lower)
-        
-        # Corregir falsos positius comuns
-        if detected in ['cy', 'tr', 'it', 'pt']:
-            return 'es'
-        
-        return detected
-        
-    except LangDetectException:
-        return 'es'
 
 def process_voice_with_ai(message, phone, appointment_manager, conversation_manager):
     """
-    Processa el missatge de l'usuari amb GPT per gestionar reserves.
+    Processador SIMPLIFICAT per veu - optimitzat per latència mínima
+    
+    DIFERÈNCIES amb WhatsApp:
+    - Historial mínim (3 missatges vs 10)
+    - Sense gestió d'estats complexos (WAITING_NOTES, WAITING_MENU)
+    - Respostes curtes i directes
+    - Idioma només a l'inici (no re-detectat)
     """
-    # IMPORTANT: Netejar prefixos del telèfon
+    # ⏱️ INICI - Timing total
+    start_time_total = time.time()
+    logger.info("=" * 80)
+    logger.info(f"🎤 [VOICE] INICI processament | Phone: {phone}")
+    logger.info(f"📝 [VOICE] Missatge: '{message[:100]}...'")
+    
+    # Netejar prefixos del telèfon
     if phone.startswith('whatsapp:'):
         phone = phone.replace('whatsapp:', '')
     elif phone.startswith('telegram:'):
         phone = phone.replace('telegram:', '')
+
+    # --- STEP 1: Obtenir idioma del client (NO re-detectar) ---
+    start_time_language = time.time()
     
-    print(f"📝 Missatge rebut: '{message}'")
-
-    # --- STEP 1: Gestió de l'idioma ---
-
-    saved_language = appointment_manager.get_customer_language(phone)
-    message_count = conversation_manager.get_message_count(phone)
-
-    if saved_language:
-        language = saved_language
-        print(f"🌍 Client conegut - Idioma mantingut: {language}")
-    else:
-        if message_count == 0:
-            # Primer missatge: detectar però NO guardar encara
-            language = detect_language(message)
-            print(f"👋 Primer missatge → Idioma detectat (temporal, no guardat): {language}")
-        elif message_count == 1:
-            # Segon missatge: ara sí que el guardem!
-            new_language = detect_language(message)
-            appointment_manager.save_customer_language(phone, new_language)
-            language = new_language
-            print(f"🔄 Segon missatge → Idioma detectat i guardat: {new_language}")
-        else:
-            # A partir del tercer missatge
-            language = appointment_manager.get_customer_language(phone) or 'es'
-            print(f"📌 Tercer missatge o més → idioma: {language}")
-
-    print(f"✅ Idioma final: {language}")
-
-    # --- STEP 2: Obtenir historial ABANS de processar ---
-    history = conversation_manager.get_history(phone, limit=10)
-    print(f"📚 DEBUG: Historial obtingut ({len(history)} missatges)")
-    for idx, msg in enumerate(history):
-        print(f"   [{idx}] {msg['role']}: {msg['content'][:50]}...")
+    language = appointment_manager.get_customer_language(phone) or 'es'
     
-    # --- STEP 3: COMPROVAR ESTATS ABANS DE CRIDAR LA IA ---
-    print(f"🔍 Comprovant estats actius...")
-    
-    state_found = False
-    for msg in reversed(history):
-        # === ESTAT 1: Esperant observacions ===
-        if msg['role'] == 'system' and msg['content'].startswith('WAITING_NOTES:'):
-            state_found = True
-            appointment_id = int(msg['content'].split(':')[1])
-            print(f"⏳ Estat actiu: WAITING_NOTES per reserva {appointment_id}")
-            
-            negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
-            
-            # Si respon negativament a observacions
-            if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
-                print(f"❌ Resposta negativa detectada: '{message}'")
-                # Passar a preguntar pel menú
-                conversation_manager.save_message(phone, "system", f"WAITING_MENU:{appointment_id}")
-                menu_msgs = {
-                    'ca': '✅ Perfecte!\n\n Vols que t\'enviï la carta o el menú del dia?',
-                    'es': '✅ ¡Perfecto!\n\n ¿Quieres que te envíe la carta o el menú del día?',
-                    'en': '✅ Perfect!\n\n Would you like me to send you the menu or today\'s specials?'
-                }
-                assistant_reply = menu_msgs.get(language, menu_msgs['es'])
-            else:
-                print(f"📝 Guardant notes: '{message}'")
-                # Guardar notes i passar a preguntar pel menú
-                success = appointment_manager.add_notes_to_appointment(phone, appointment_id, message)
-                if success:
-                    conversation_manager.save_message(phone, "system", f"WAITING_MENU:{appointment_id}")
-                    menu_msgs = {
-                        'ca': f'✅ Notes afegides: "{message}"\n\n Vols que t\'enviï la carta o el menú del dia?',
-                        'es': f'✅ Observación añadida: "{message}"\n\n ¿Quieres que te envíe la carta o el menú del día?',
-                        'en': f'✅ Note added: "{message}"\n\n Would you like me to send you the menu or today\'s specials?'
-                    }
-                    assistant_reply = menu_msgs.get(language, menu_msgs['es'])
-                else:
-                    assistant_reply = "Error afegint notes."
-            
-            conversation_manager.save_message(phone, "user", message)
-            conversation_manager.save_message(phone, "assistant", assistant_reply)
-            print(f"✅ Resposta enviada (WAITING_NOTES): {assistant_reply[:50]}...")
-            return assistant_reply
-        
-        # === ESTAT 2: Esperant resposta sobre menú ===
-        elif msg['role'] == 'system' and msg['content'].startswith('WAITING_MENU:'):
-            appointment_id = int(msg['content'].split(':')[1])
-            print(f"⏳ Estat actiu: WAITING_MENU per reserva {appointment_id}")
-            
-            negative_keywords = ['no', 'cap', 'ninguna', 'res', 'nada', 'nothing', 'none']
-            
-            # Si respon negativament
-            if any(word in message.lower() for word in negative_keywords) and len(message.split()) <= 3:
-                print(f"❌ Resposta negativa detectada: '{message}'")
-                thanks_msgs = {
-                    'ca': '✅ Perfecte! Ens veiem aviat! ',
-                    'es': '✅ ¡Perfecto! ¡Nos vemos pronto! ',
-                    'en': '✅ Perfect! See you soon! '
-                }
-                assistant_reply = thanks_msgs.get(language, thanks_msgs['es'])
-                conversation_manager.save_message(phone, "user", message)
-                conversation_manager.save_message(phone, "assistant", assistant_reply)
-                print(f"✅ Resposta enviada (WAITING_MENU - NO): {assistant_reply}")
-                return assistant_reply
-            else:
-                print(f"✅ Resposta afirmativa - La IA processarà la petició del menú")
-                # Si respon afirmativament, sortir del bucle i deixar que la IA processi
-                break
-        
-        # Continuar buscant estats en tot l'historial
-        # (no fer break prematurament)
-    
-    print(f"✅ Cap estat actiu - Processant amb IA...")
+    elapsed_language = time.time() - start_time_language
+    logger.info(f"⏱️  [VOICE] Idioma obtingut en {elapsed_language:.3f}s: {language}")
 
-    # --- STEP 4: Obtenir info del client i reserves ---
+    # --- STEP 2: Historial MÍNIM (només 3 últims missatges) ---
+    start_time_history = time.time()
+    
+    history = conversation_manager.get_history(phone, limit=6)
+    
+    elapsed_history = time.time() - start_time_history
+    logger.info(f"⏱️  [VOICE] Historial obtingut en {elapsed_history:.3f}s ({len(history)} missatges)")
+
+    # --- STEP 3: Info del client (ràpid) ---
+    start_time_customer = time.time()
+    
     customer_name = appointment_manager.get_customer_name(phone)
-    latest_appointment = appointment_manager.get_latest_appointment(phone)
+    
+    elapsed_customer = time.time() - start_time_customer
+    logger.info(f"⏱️  [VOICE] Info client en {elapsed_customer:.3f}s")
 
-    # STEP 5: Preparar informació de data actual
+    # --- STEP 4: Preparar context SIMPLIFICAT ---
     today = datetime.now()
     today_str = today.strftime("%Y-%m-%d")
     day_names = {
@@ -208,121 +69,68 @@ def process_voice_with_ai(message, phone, appointment_manager, conversation_mana
     }
     day_name = day_names.get(language, day_names['es'])[today.weekday()]
 
-    # STEP 6: Construir context sobre el client
-    customer_context = ""
-    if customer_name:
-        if language == 'ca':
-            customer_context = f"IMPORTANT: Aquest client ja és conegut. El seu nom és {customer_name}. Saluda'l sempre pel nom!"
-        elif language == 'en':
-            customer_context = f"IMPORTANT: This customer is known. Their name is {customer_name}. Always greet them by name!"
-        else:
-            customer_context = f"IMPORTANTE: Este cliente ya es conocido. Su nombre es {customer_name}. ¡Salúdalo siempre por su nombre!"
-    else:
-        if language == 'ca':
-            customer_context = "IMPORTANT: Aquest és un client NOU. NO tens el seu nom. Saluda amb 'Hola!' i pregunta educadament pel seu nom quan calgui fer la reserva."
-        elif language == 'en':
-            customer_context = "IMPORTANT: This is a NEW customer. You DON'T have their name. Say 'Hello!' and politely ask for their name when needed for the reservation."
-        else:
-            customer_context = "IMPORTANTE: Este es un cliente NUEVO. NO tienes su nombre. Saluda con '¡Hola!' y pide educadamente su nombre cuando sea necesario para la reserva."
+    # Context MOLT simple
+    customer_context = f"Client: {customer_name}" if customer_name else "Client NOU"
 
-    # STEP 7: Construir context sobre reserves actives
-    appointment_context = ""
-    if latest_appointment:
-        apt_contexts = {
-            'ca': f"\n\nINFO: Aquest usuari té una reserva recent:\n- ID: {latest_appointment['id']}\n- Data: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Persones: {latest_appointment['num_people']}\n\nPOT FER MÉS RESERVES! Si vol fer una NOVA reserva, usa create_appointment. Si vol MODIFICAR aquesta reserva, usa update_appointment.",
-            'en': f"\n\nINFO: This user has a recent reservation:\n- ID: {latest_appointment['id']}\n- Date: {latest_appointment['date']}\n- Time: {latest_appointment['time']}\n- People: {latest_appointment['num_people']}\n\nCAN MAKE MORE RESERVATIONS! If they want a NEW reservation, use create_appointment. If they want to MODIFY this one, use update_appointment.",
-            'es': f"\n\nINFO: Este usuario tiene una reserva reciente:\n- ID: {latest_appointment['id']}\n- Fecha: {latest_appointment['date']}\n- Hora: {latest_appointment['time']}\n- Personas: {latest_appointment['num_people']}\n\n¡PUEDE HACER MÁS RESERVAS! Si quiere hacer una NUEVA reserva, usa create_appointment. Si quiere MODIFICAR esta reserva, usa update_appointment."
-        }
-        appointment_context = apt_contexts.get(language, apt_contexts['es'])
-    
-    # STEP 8: Construir system prompts per cada idioma
+    # System prompt SIMPLIFICAT i CURT
     system_prompts = {
-        'ca': f"""Ets un gestor de reserves virtual del restaurant Amaru. Només pots respondre preguntes relacionades amb la teva funció de gestió de reserves.
+        'ca': f"""Ets l'assistent de reserves d'Amaru. {customer_context}. Avui és {day_name} {today_str}.
 
-DATA ACTUAL: Avui és {day_name} {today_str}.
+Respon de forma MOLT BREU i DIRECTA. 1-2 frases màxim.
 
-{customer_context}{appointment_context}
+Funcions: create_appointment, update_appointment, list_appointments, cancel_appointment.
 
-
-
-FUNCIONS DISPONIBLES:
-1. create_appointment – Crear reserva nova
-2. update_appointment – Modificar reserva existent
-3. list_appointments – Veure reserves de l'usuari
-4. cancel_appointment – Cancel·lar reserva existent
-5. get_menu – Enviar menú o carta del restaurant
-6. save_customer_language – Guardar idioma i nom del client
-
-Sigues professional i concís.
-
-IMPORTANT: No contestis mai temes no relacionats amb les reserves del restaurant.""",
+IMPORTANT: NO facis preguntes de seguiment. Confirma la reserva i prou.""",
         
-        'es': f"""Eres un gestor de reservas virtual del restaurante Amaru. Solo puedes responder preguntas relacionadas con tu función de gestión de reservas.
+        'es': f"""Eres el asistente de reservas de Amaru. {customer_context}. Hoy es {day_name} {today_str}.
 
-FECHA ACTUAL: Hoy es {day_name} {today_str}.
+Responde de forma MUY BREVE y DIRECTA. 1-2 frases máximo.
 
-{customer_context}{appointment_context}
+Funciones: create_appointment, update_appointment, list_appointments, cancel_appointment.
 
-
-
-FUNCIONES DISPONIBLES:
-1. create_appointment – Crear nueva reserva
-2. update_appointment – Modificar reserva existente
-3. list_appointments – Ver reservas del usuario
-4. cancel_appointment – Cancelar reserva existente
-5. get_menu – Enviar menú o carta del restaurante
-6. save_customer_language – Guardar idioma y nombre del cliente
-
-Sigues profesional y conciso.
-
-IMPORTANTE: No contestes nunca temas no relacionados con las reservas del restaurante.""",
+IMPORTANTE: NO hagas preguntas de seguimiento. Confirma la reserva y ya está.""",
         
-        'en': f"""You are a virtual reservation manager for Amaru restaurant. You can only answer questions related to your reservation management function.
+        'en': f"""You're Amaru's reservation assistant. {customer_context}. Today is {day_name} {today_str}.
 
-CURRENT DATE: Today is {day_name} {today_str}.
+Respond VERY BRIEFLY and DIRECTLY. 1-2 sentences max.
 
-{customer_context}{appointment_context}
+Functions: create_appointment, update_appointment, list_appointments, cancel_appointment.
 
-
-
-AVAILABLE FUNCTIONS:
-1. create_appointment – Create a new reservation
-2. update_appointment – Modify an existing reservation
-3. list_appointments – View user reservations
-4. cancel_appointment – Cancel an existing reservation
-5. get_menu – Send restaurant menu or card
-6. save_customer_language – Save customer's language and name
-
-Both professional and concise.
-
-IMPORTANT: Never answer topics unrelated to restaurant reservations."""
-}
+IMPORTANT: NO follow-up questions. Just confirm the reservation."""
+    }
     
     system_prompt = system_prompts.get(language, system_prompts['es'])
     
     try:
+        # --- STEP 5: Cridar OpenAI (amb model ràpid) ---
+        start_time_openai = time.time()
+        logger.info("🤖 [VOICE] Cridant OpenAI API...")
+        
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
+        # Usar gpt-4o-mini per rapidesa
         response = client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             messages=messages,
+            temperature=0.7,
+            max_tokens=150,  # Limitar tokens per respostes curtes
             tools=[
                 {
                     "type": "function",
                     "function": {
                         "name": "create_appointment",
-                        "description": "Crear una reserva nova quan tinguis TOTES les dades necessaris",
+                        "description": "Crear reserva",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "client_name": {"type": "string", "description": "Nom del client"},
-                                "date": {"type": "string", "description": "Data en format YYYY-MM-DD"},
-                                "time": {"type": "string", "description": "Hora en format HH:MM (24 hores)"},
-                                "num_people": {"type": "integer", "description": "Número de persones (1-8)"}
+                                "client_name": {"type": "string"},
+                                "date": {"type": "string", "description": "Format YYYY-MM-DD"},
+                                "time": {"type": "string", "description": "Format HH:MM"},
+                                "num_people": {"type": "integer", "description": "1-8 persones"}
                             },
                             "required": ["client_name", "date", "time", "num_people"]
                         }
@@ -332,14 +140,14 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     "type": "function",
                     "function": {
                         "name": "update_appointment",
-                        "description": "Modificar/actualitzar una reserva existent sense cancel·lar-la",
+                        "description": "Modificar reserva",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "appointment_id": {"type": "integer", "description": "ID de la reserva a modificar"},
-                                "new_date": {"type": "string", "description": "Nova data (YYYY-MM-DD) o null si no canvia"},
-                                "new_time": {"type": "string", "description": "Nova hora (HH:MM) o null si no canvia"},
-                                "new_num_people": {"type": "integer", "description": "Nou número de persones o null si no canvia"}
+                                "appointment_id": {"type": "integer"},
+                                "new_date": {"type": "string"},
+                                "new_time": {"type": "string"},
+                                "new_num_people": {"type": "integer"}
                             },
                             "required": ["appointment_id"]
                         }
@@ -349,47 +157,31 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     "type": "function",
                     "function": {
                         "name": "list_appointments",
-                        "description": "Llistar les reserves de l'usuari"
+                        "description": "Llistar reserves"
                     }
                 },
                 {
                     "type": "function",
                     "function": {
                         "name": "cancel_appointment",
-                        "description": "Cancel·lar una reserva existent",
+                        "description": "Cancel·lar reserva",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "appointment_id": {"type": "integer", "description": "ID de la reserva"}
+                                "appointment_id": {"type": "integer"}
                             },
                             "required": ["appointment_id"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_menu",
-                        "description": "Obtenir menú segons el que demana el client. IMPORTANT: Si demanen 'menú' o 'menu' (sense especificar), és el menú del dia ('menu_dia'). Si demanen específicament 'carta', és la carta permanent ('carta'). Usa 'menu_dia' amb el nom del dia (dilluns/monday/lunes, dimarts/tuesday/martes, dimecres/wednesday/miércoles, dijous/thursday/jueves, divendres/friday/viernes, dissabte/saturday/sábado, diumenge/sunday/domingo) per menús específics del dia.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "menu_type": {
-                                    "type": "string",
-                                    "enum": ["carta", "menu_dia"],
-                                    "description": "Tipus de menú: 'carta' NOMÉS si demanen explícitament 'carta', 'menu_dia' per menú del dia o quan diuen 'menú/menu'"
-                                },
-                                "day_name": {
-                                    "type": "string",
-                                    "description": "Nom del dia en qualsevol idioma (dilluns, lunes, monday, dimarts, martes, tuesday, etc.). Només per menu_dia. Si demanen 'avui' o 'demà', calcula el dia de la setmana corresponent."
-                                }
-                            },
-                            "required": ["menu_type"]
                         }
                     }
                 }
             ]
         )
+        
+        elapsed_openai = time.time() - start_time_openai
+        logger.info(f"⏱️  [VOICE] OpenAI resposta en {elapsed_openai:.3f}s")
+        
+        # --- STEP 6: Processar resposta ---
+        start_time_processing = time.time()
         
         message_response = response.choices[0].message
         assistant_reply = ""
@@ -399,52 +191,46 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
             
+            logger.info(f"🔧 [VOICE] Funció cridada: {function_name}")
+            
             if function_name == "create_appointment":
                 num_people = function_args.get('num_people', 2)
                 
                 if num_people < 1 or num_people > 8:
                     error_msgs = {
-                        'es': "Lo siento, solo aceptamos reservas de 1 a 8 personas.",
-                        'ca': "Ho sento, només acceptem reserves d'1 a 8 persones.",
-                        'en': "Sorry, we only accept reservations for 1 to 8 people."
+                        'es': "Lo siento, solo aceptamos de 1 a 8 personas.",
+                        'ca': "Ho sento, només acceptem d'1 a 8 persones.",
+                        'en': "Sorry, we accept 1 to 8 people only."
                     }
-                    return error_msgs.get(language, error_msgs['es'])
-                
-                # IMPORTANT: Guardar nom del client
-                appointment_manager.save_customer_info(phone, function_args.get('client_name'))
-                
-                result = appointment_manager.create_appointment(
-                    phone=phone,
-                    client_name=function_args.get('client_name'),
-                    date=function_args.get('date'),
-                    time=function_args.get('time'),
-                    num_people=num_people,
-                    duration_hours=1
-                )
-                
-                if result:
-                    table_info = result['table']
-                    
-                    # Missatges segons idioma amb pregunta NOMÉS per observacions
-                    if language == 'ca':
-                        confirmation = f"Reserva confirmada! {num_people} persones, el {function_args['date']} a les {function_args['time']} a nom de {function_args['client_name']} Tens alguna observació especial? "
-                    elif language == 'en':
-                        confirmation = f"Reservation confirmed! {num_people} people, on {function_args['date']} at {function_args['time']} for {function_args['client_name']}. Do you have any special notes?"
-                    else:
-                        confirmation = f"Reserva confirmada! {num_people} persones, el {function_args['date']} a les {function_args['time']} a nom de {function_args['client_name']} Tens alguna observació especial? "
-                    
-                    assistant_reply = confirmation
-                    
-                    # Guardar estat esperant observacions
-                    conversation_manager.save_message(phone, "system", f"WAITING_NOTES:{result['id']}")
-                    print(f"📌 Estat guardat: WAITING_NOTES:{result['id']}")
+                    assistant_reply = error_msgs.get(language, error_msgs['es'])
                 else:
-                    no_tables_msgs = {
-                        'es': f"Lo siento, no hay mesas disponibles para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¿Prefieres otro horario?",
-                        'ca': f"Ho sento, no hi ha taules disponibles per a {num_people} persones el {function_args['date']} a les {function_args['time']}. Prefereixes un altre horari?",
-                        'en': f"Sorry, no tables available for {num_people} people on {function_args['date']} at {function_args['time']}. Would you like another time?"
-                    }
-                    assistant_reply = no_tables_msgs.get(language, no_tables_msgs['es'])
+                    # Guardar nom del client
+                    appointment_manager.save_customer_info(phone, function_args.get('client_name'))
+                    
+                    result = appointment_manager.create_appointment(
+                        phone=phone,
+                        client_name=function_args.get('client_name'),
+                        date=function_args.get('date'),
+                        time=function_args.get('time'),
+                        num_people=num_people,
+                        duration_hours=1
+                    )
+                    
+                    if result:
+                        # Confirmació CURTA i DIRECTA (sense preguntes de seguiment)
+                        confirmations = {
+                            'ca': f"Reserva confirmada per {num_people} persones el {function_args['date']} a les {function_args['time']}. Ens veiem!",
+                            'es': f"Reserva confirmada para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¡Nos vemos!",
+                            'en': f"Reservation confirmed for {num_people} people on {function_args['date']} at {function_args['time']}. See you!"
+                        }
+                        assistant_reply = confirmations.get(language, confirmations['es'])
+                    else:
+                        no_tables_msgs = {
+                            'es': f"Lo siento, no hay mesas disponibles para {num_people} personas ese día a esa hora.",
+                            'ca': f"Ho sento, no hi ha taules disponibles per {num_people} persones aquell dia a aquesta hora.",
+                            'en': f"Sorry, no tables available for {num_people} people at that time."
+                        }
+                        assistant_reply = no_tables_msgs.get(language, no_tables_msgs['es'])
             
             elif function_name == "update_appointment":
                 apt_id = function_args.get('appointment_id')
@@ -461,18 +247,17 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 )
                 
                 if result:
-                    table_info = result['table']
                     update_msgs = {
-                        'es': f"Reserva Actualizada. {num_people} personas, el {function_args['date']} a las {function_args['time']} a nombre de {function_args['client_name']}. Nos vemos pronto!",
-                        'ca': f"Reserva Actualitzada. {num_people} persones, el {function_args['date']} a les {function_args['time']} a nom de {function_args['client_name']}. Ens veiem aviat!",
-                        'en': f"Reservation Updated. {num_people} people, on {function_args['date']} at {function_args['time']} for {function_args['client_name']}. See you soon!"
+                        'es': "Reserva actualizada correctamente.",
+                        'ca': "Reserva actualitzada correctament.",
+                        'en': "Reservation updated successfully."
                     }
                     assistant_reply = update_msgs.get(language, update_msgs['es'])
                 else:
                     error_msgs = {
-                        'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario.",
-                        'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
-                        'en': "Sorry, couldn't update the reservation. There might not be tables available at that time."
+                        'es': "No se pudo actualizar la reserva.",
+                        'ca': "No s'ha pogut actualitzar la reserva.",
+                        'en': "Could not update the reservation."
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
             
@@ -481,23 +266,23 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 
                 if not appointments:
                     no_apts = {
-                        'es': "No tienes reservas programadas.",
-                        'en': "You don't have any scheduled reservations.",
-                        'ca': "No tens reserves programades."
+                        'es': "No tienes reservas.",
+                        'en': "No reservations.",
+                        'ca': "No tens reserves."
                     }
                     assistant_reply = no_apts.get(language, no_apts['es'])
                 else:
-                    headers = {
-                        'es': "Tus reservas:\n\n",
-                        'en': "Your reservations:\n\n",
-                        'ca': "Les teves reserves:\n\n"
-                    }
-                    assistant_reply = headers.get(language, headers['es'])
+                    # Només la primera reserva (simplificat)
+                    apt = appointments[0]
+                    apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
+                    time_str = start_time.strftime("%H:%M")
                     
-                    for apt in appointments:
-                        apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
-                        time_str = start_time.strftime("%H:%M")
-                        assistant_reply += f"ID: {apt_id}\n• {date} - {time_str}\n  {num_people} persones - Mesa {table_num}\n  {name} - {status}\n\n"
+                    list_msgs = {
+                        'es': f"Tienes reserva el {date} a las {time_str} para {num_people} personas.",
+                        'ca': f"Tens reserva el {date} a les {time_str} per {num_people} persones.",
+                        'en': f"You have a reservation on {date} at {time_str} for {num_people} people."
+                    }
+                    assistant_reply = list_msgs.get(language, list_msgs['es'])
             
             elif function_name == "cancel_appointment":
                 apt_id = function_args.get('appointment_id')
@@ -505,108 +290,44 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 
                 if success:
                     cancel_msgs = {
-                        'es': "Reserva cancelada correctamente.",
-                        'ca': "Reserva cancel·lada correctament.",
-                        'en': "Reservation cancelled successfully."
+                        'es': "Reserva cancelada.",
+                        'ca': "Reserva cancel·lada.",
+                        'en': "Reservation cancelled."
                     }
                     assistant_reply = cancel_msgs.get(language, cancel_msgs['es'])
                 else:
                     error_msgs = {
-                        'es': "No se pudo cancelar la reserva.",
-                        'ca': "No s'ha pogut cancel·lar la reserva.",
-                        'en': "Could not cancel the reservation."
+                        'es': "No se pudo cancelar.",
+                        'ca': "No s'ha pogut cancel·lar.",
+                        'en': "Could not cancel."
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
-            
-            elif function_name == "get_menu":
-                # Obtenir menú del restaurant (carta o menú del dia)
-                media_manager = MediaManager()
-                menu_type = function_args.get('menu_type', 'carta')
-                day_name_arg = function_args.get('day_name')
-                
-                # Si demanen menú del dia sense especificar dia, usar el dia de la reserva
-                if menu_type == 'menu_dia' and not day_name_arg:
-                    # Buscar si hi ha una reserva en estat WAITING_MENU
-                    reservation_date = None
-                    for msg in reversed(history):
-                        if msg['role'] == 'system' and msg['content'].startswith('WAITING_MENU:'):
-                            appointment_id = int(msg['content'].split(':')[1])
-                            # Obtenir la data de la reserva
-                            apt = appointment_manager.get_appointment_by_id(phone, appointment_id)
-                            if apt:
-                                reservation_date = apt['date']
-                            break
-                    
-                    day_names_map = {
-                        0: ['dilluns', 'lunes', 'monday'],
-                        1: ['dimarts', 'martes', 'tuesday'],
-                        2: ['dimecres', 'miércoles', 'wednesday'],
-                        3: ['dijous', 'jueves', 'thursday'],
-                        4: ['divendres', 'viernes', 'friday'],
-                        5: ['dissabte', 'sábado', 'saturday'],
-                        6: ['diumenge', 'domingo', 'sunday']
-                    }
-                    
-                    # Si tenim data de reserva, usar el dia de la setmana de la reserva
-                    if reservation_date:
-                        if isinstance(reservation_date, str):
-                            date_obj = datetime.strptime(reservation_date, '%Y-%m-%d')
-                        else:
-                            date_obj = reservation_date
-                        reservation_day_num = date_obj.weekday()
-                        # Usar el nom del dia segons l'idioma del client
-                        if language == 'ca':
-                            day_name_arg = day_names_map[reservation_day_num][0]
-                        elif language == 'es':
-                            day_name_arg = day_names_map[reservation_day_num][1]
-                        else:
-                            day_name_arg = day_names_map[reservation_day_num][2]
-                        print(f"📅 Usant dia de la reserva: {reservation_date} -> {day_name_arg}")
-                    else:
-                        # Si no hi ha reserva, usar el dia d'avui
-                        today_num = datetime.now().weekday()
-                        if language == 'ca':
-                            day_name_arg = day_names_map[today_num][0]
-                        elif language == 'es':
-                            day_name_arg = day_names_map[today_num][1]
-                        else:
-                            day_name_arg = day_names_map[today_num][2]
-                        print(f"📅 Usant dia d'avui: {day_name_arg}")
-                
-                menu = media_manager.get_menu(menu_type, day_name_arg)
-                
-                if menu:
-                    if menu_type == 'carta':
-                        menu_msgs = {
-                            'ca': f"📝 Aquí tens la nostra carta:\n\n🔗 {menu['url']}\n\nQue gaudeixis!",
-                            'es': f"📝 Aquí tienes nuestra carta:\n\n🔗 {menu['url']}\n\n¡Que disfrutes!",
-                            'en': f"📝 Here's our menu:\n\n🔗 {menu['url']}\n\nEnjoy!"
-                        }
-                    else:
-                        menu_msgs = {
-                            'ca': f"📝 Aquí tens el menú del dia ({day_name_arg}):\n\n🔗 {menu['url']}\n\nQue gaudeixis!",
-                            'es': f"📝 Aquí tienes el menú del día ({day_name_arg}):\n\n🔗 {menu['url']}\n\n¡Que disfrutes!",
-                            'en': f"📝 Here's today's menu ({day_name_arg}):\n\n🔗 {menu['url']}\n\nEnjoy!"
-                        }
-                    assistant_reply = menu_msgs.get(language, menu_msgs['es'])
-                else:
-                    no_menu_msgs = {
-                        'ca': "Ho sento, ara mateix no tinc aquest menú disponible. Pots consultar-lo al restaurant.",
-                        'es': "Lo siento, ahora mismo no tengo ese menú disponible. Puedes consultarlo en el restaurante.",
-                        'en': "Sorry, I don't have that menu available right now. You can check it at the restaurant."
-                    }
-                    assistant_reply = no_menu_msgs.get(language, no_menu_msgs['es'])
         else:
             assistant_reply = message_response.content
         
+        elapsed_processing = time.time() - start_time_processing
+        logger.info(f"⏱️  [VOICE] Processament en {elapsed_processing:.3f}s")
+        
+        # Guardar a historial
         conversation_manager.save_message(phone, "user", message)
         conversation_manager.save_message(phone, "assistant", assistant_reply)
-        print(f"✅ Historial guardat correctament")
+        
+        elapsed_total = time.time() - start_time_total
+        logger.info(f"✅ [VOICE] Resposta: {assistant_reply[:80]}...")
+        logger.info(f"⏱️  [VOICE] ⭐ TEMPS TOTAL: {elapsed_total:.3f}s ⭐")
+        logger.info("=" * 80)
         
         return assistant_reply
     
     except Exception as e:
-        print(f"❌ ERROR procesando con IA: {e}")
+        elapsed_total = time.time() - start_time_total
+        logger.error(f"❌ [VOICE] ERROR després de {elapsed_total:.3f}s: {e}")
         import traceback
         traceback.print_exc()
-        return "Lo siento, hubo un error. ¿Puedes intentar de nuevo?"
+        
+        error_msgs = {
+            'es': "Lo siento, hubo un error. ¿Puedes repetir?",
+            'ca': "Ho sento, hi ha hagut un error. Pots repetir?",
+            'en': "Sorry, there was an error. Can you repeat?"
+        }
+        return error_msgs.get(language, error_msgs['es'])

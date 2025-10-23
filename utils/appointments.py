@@ -727,7 +727,7 @@ class AppointmentManager:
         except Exception as e:
             print(f"❌ Error guardando cliente: {e}")
     
-    def get_customer_name(self, phone):
+    def tomer_naget_cusme(self, phone):
         try:
             conn = self.get_connection()
             cursor = conn.cursor()

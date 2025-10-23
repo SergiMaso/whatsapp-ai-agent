@@ -15,6 +15,7 @@ from utils.media_manager import MediaManager
 from utils.voice_handler import VoiceHandler
 import logging
 from twilio.twiml.voice_response import VoiceResponse
+import time
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -1624,8 +1625,9 @@ def voice_webhook():
 @app.route('/voice/process', methods=['POST'])
 def voice_process():
     """
-    🎤 Endpoint que processa el text transcrit de la veu de l’usuari
+    🎤 Endpoint que processa el text transcrit de la veu de l'usuari
     """
+    start_time = time.time()
     logger.info("🎤 Processant entrada de veu...")
 
     try:
@@ -1639,7 +1641,12 @@ def voice_process():
         if not speech_result:
             return str(voice_handler.create_error_response())
 
+        # Processar transcripció (inclou IA + TTS)
         response = voice_handler.process_transcription(speech_result, phone, call_sid)
+        
+        total_time = time.time() - start_time
+        logger.info(f"⏱️ ENDPOINT TOTAL: {total_time:.2f}s")
+        
         return str(response)
 
     except Exception as e:
