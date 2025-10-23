@@ -1,298 +1,266 @@
+# -*- coding: utf-8 -*-
+import os
+import logging
 from twilio.twiml.voice_response import VoiceResponse
 from utils.ai_processor import process_message_with_ai
 from utils.appointments import AppointmentManager, ConversationManager
+from utils.ai_processor_voice import process_voice_with_ai
+
+# Configuració de logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
 
 class VoiceHandler:
     """
-    Gestiona les trucades telefòniques amb conversa fluida
+    Gestiona les trucades telefòniques amb conversa fluida (Twilio + IA)
     """
-    
+
     # Veus naturals per idioma (Twilio Polly)
     VOICES = {
-        'ca': 'Polly.Arlet',
+        'ca': 'Polly.Lucia',   # Twilio no suporta català, s’usa veu espanyola
         'es': 'Polly.Lucia',
         'en': 'Polly.Joanna'
     }
-    
+
     LANGUAGE_CODES = {
-        'ca': 'ca-ES',
+        'ca': 'es-ES',
         'es': 'es-ES',
         'en': 'en-US'
     }
-    
+
     CONFIRMATION_KEYWORDS = {
         'ca': ['sí', 'si', 'correcte', 'ok', 'val', 'd\'acord', 'dacord', 'perfet', 'perfecte'],
         'es': ['sí', 'si', 'correcto', 'vale', 'de acuerdo', 'perfecto', 'ok'],
         'en': ['yes', 'correct', 'ok', 'sure', 'right', 'perfect', 'yeah', 'yep']
     }
-    
+
     NEGATION_KEYWORDS = {
         'ca': ['no', 'pas', 'tampoc', 'gens'],
         'es': ['no', 'tampoco', 'nada'],
         'en': ['no', 'nope', 'not', 'nothing']
     }
-    
+
     END_KEYWORDS = {
         'ca': ['adeu', 'adéu', 'gràcies', 'gracies', 'ja està', 'res més', 'prou', 'fins aviat'],
         'es': ['adiós', 'adios', 'gracias', 'ya está', 'nada más', 'hasta luego'],
         'en': ['goodbye', 'bye', 'thanks', 'thank you', 'that\'s all', 'nothing else']
     }
-    
+
+    GREETINGS_WITH_KNOWN_CUSTOMER = {
+        'ca': "Hola {saved_customer}, benvingut a Amaru. Com et puc ajudar?",
+        'es': "Hola {saved_customer}, bienvenido a Amaru. ¿Cómo te puedo ayudar?",
+        'en': "Hello {saved_customer}, welcome to Amaru. How can I help you?"
+    }
+
     GREETINGS = {
         'ca': "Hola, benvingut a Amaru. Com et puc ajudar?",
         'es': "Hola, bienvenido a Amaru. ¿Cómo te puedo ayudar?",
         'en': "Hello, welcome to Amaru. How can I help you?"
     }
-    
+
     CONTINUE_PROMPTS = {
         'ca': "Alguna cosa més?",
         'es': "¿Algo más?",
         'en': "Anything else?"
     }
-    
+
     GOODBYE_MESSAGES = {
         'ca': "Perfecte! Ens veiem aviat. Adeu!",
         'es': "¡Perfecto! Nos vemos pronto. ¡Adiós!",
         'en': "Perfect! See you soon. Goodbye!"
     }
-    
+
     def __init__(self):
-        print("🎙️ [VOICE_HANDLER] Inicialitzant VoiceHandler...")
+        logger.info("🎙️ Inicialitzant VoiceHandler...")
         self.appointment_manager = AppointmentManager()
         self.conversation_manager = ConversationManager()
-        print("✅ [VOICE_HANDLER] VoiceHandler inicialitzat correctament")
-    
+        logger.info("✅ VoiceHandler inicialitzat correctament")
+
+    # ======================================================================
+    # UTILITATS
+    # ======================================================================
     def get_voice_for_language(self, language):
         voice = self.VOICES.get(language, self.VOICES['es'])
-        print(f"🔊 [VOICE_HANDLER] Veu seleccionada: {voice} per idioma {language}")
+        logger.debug(f"Veu seleccionada: {voice} per idioma {language}")
         return voice
-    
+
     def get_language_code(self, language):
         code = self.LANGUAGE_CODES.get(language, self.LANGUAGE_CODES['es'])
-        print(f"🌍 [VOICE_HANDLER] Codi idioma: {code}")
         return code
-    
+
     def is_confirmation(self, text, language):
         text_lower = text.lower().strip()
         keywords = self.CONFIRMATION_KEYWORDS.get(language, self.CONFIRMATION_KEYWORDS['es'])
-        result = any(keyword in text_lower for keyword in keywords)
-        print(f"✅ [VOICE_HANDLER] És confirmació? {result} - Text: '{text}'")
-        return result
-    
+        return any(keyword in text_lower for keyword in keywords)
+
     def is_negation(self, text, language):
         text_lower = text.lower().strip()
         keywords = self.NEGATION_KEYWORDS.get(language, self.NEGATION_KEYWORDS['es'])
-        result = any(keyword in text_lower for keyword in keywords)
-        print(f"❌ [VOICE_HANDLER] És negació? {result} - Text: '{text}'")
-        return result
-    
+        return any(keyword in text_lower for keyword in keywords)
+
     def wants_to_end(self, text, language):
-        print(f"🔍 [VOICE_HANDLER] Comprovant si vol acabar: '{text}'")
         text_lower = text.lower().strip()
         keywords = self.END_KEYWORDS.get(language, self.END_KEYWORDS['es'])
-        
+
         if self.is_negation(text, language) and len(text_lower.split()) <= 3:
-            print("👋 [VOICE_HANDLER] Detectada negació curta - Vol acabar")
             return True
-        
-        result = any(keyword in text_lower for keyword in keywords)
-        print(f"👋 [VOICE_HANDLER] Vol acabar? {result}")
-        return result
-    
-    def create_initial_response(self, language='es'):
-        print(f"📞 [VOICE_HANDLER] Creant resposta inicial (idioma: {language})")
-        
-        if language == 'ca':
-            language = 'es'  # Twilio no suporta català
-        
+
+        return any(keyword in text_lower for keyword in keywords)
+
+    # ======================================================================
+    # RESPOSTES DE TWILIO
+    # ======================================================================
+    def create_initial_response(self, language='es', phone=None):
+        logger.info(f"📞 Creant resposta inicial (idioma: {language})")
+
         response = VoiceResponse()
-        
-        greeting = self.GREETINGS.get(language, self.GREETINGS['es'])
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+
+        language = self.appointment_manager.get_customer_language(clean_phone) or 'es'
+        saved_customer = self.appointment_manager.get_customer_name(clean_phone)
+
+        # Escollir missatge de benvinguda
+        if saved_customer:
+            greeting = self.GREETINGS_WITH_KNOWN_CUSTOMER.get(language, self.GREETINGS_WITH_KNOWN_CUSTOMER['es'])
+            greeting = greeting.format(saved_customer)
+        else:
+            greeting = self.GREETINGS.get(language, self.GREETINGS['es'])
+
         voice = self.get_voice_for_language(language)
         lang_code = self.get_language_code(language)
-        
-        # Usar Gather (més ràpid que Record)
+
         gather = response.gather(
             input='speech',
             action='/voice/process',
             method='POST',
             language=lang_code,
-            timeout=3,
-            speech_timeout='auto',
-            profanity_filter=False
+            timeout=5,
+            speech_timeout='auto'
         )
-        
+
         gather.say(greeting, language=lang_code, voice=voice)
-        
+
         # Si no respon
         response.say("No t'he sentit. Adéu!", language=lang_code, voice=voice)
         response.hangup()
-        
+
         return response
-        
-    
+
     def create_response_and_continue(self, ai_text, language, phone, should_continue=True):
-        print(f"🤖 [VOICE_HANDLER] Creant resposta amb text IA: '{ai_text[:100]}...'")
-        print(f"🔄 [VOICE_HANDLER] Continuar? {should_continue}")
-        
+        logger.info(f"🤖 Creant resposta amb IA: '{ai_text[:80]}...'")
         response = VoiceResponse()
-        
+
         voice = self.get_voice_for_language(language)
         lang_code = self.get_language_code(language)
-        
-        # Dir la resposta de la IA
-        print(f"💬 [VOICE_HANDLER] Dient resposta IA...")
+
         response.say(ai_text, language=lang_code, voice=voice)
-        
+
         if should_continue:
             continue_prompt = self.CONTINUE_PROMPTS.get(language, self.CONTINUE_PROMPTS['es'])
-            print(f"❓ [VOICE_HANDLER] Preguntant si vol continuar: '{continue_prompt}'")
             response.say(continue_prompt, language=lang_code, voice=voice)
-            
-            # Continuar escoltant
-            print("🎤 [VOICE_HANDLER] Configurant nova gravació...")
-            response.record(
+
+            response.gather(
+                input='speech',
                 action='/voice/process',
                 method='POST',
-                max_length=30,
+                language=lang_code,
                 timeout=5,
-                transcribe=True,
-                transcribeCallback='/voice/transcription',
-                play_beep=False,
-                finish_on_key='#'
+                speech_timeout='auto'
             )
         else:
             goodbye = self.GOODBYE_MESSAGES.get(language, self.GOODBYE_MESSAGES['es'])
-            print(f"👋 [VOICE_HANDLER] Finalitzant amb comiat: '{goodbye}'")
             response.say(goodbye, language=lang_code, voice=voice)
             response.hangup()
-            print("📞 [VOICE_HANDLER] Trucada penjada")
-        
-        twiml = str(response)
-        print(f"📋 [VOICE_HANDLER] TwiML resposta:\n{twiml}")
-        
+
         return response
-    
+
+    # ======================================================================
+    # PROCESSAMENT DE TRANSCRIPCIÓ
+    # ======================================================================
     def process_transcription(self, transcription, phone, call_sid=None):
-        print("=" * 80)
-        print(f"🎯 [VOICE_HANDLER] PROCESSANT TRANSCRIPCIÓ")
-        print(f"📝 [VOICE_HANDLER] Text: '{transcription}'")
-        print(f"📞 [VOICE_HANDLER] Telèfon: {phone}")
-        print(f"🆔 [VOICE_HANDLER] CallSid: {call_sid}")
-        print("=" * 80)
-        
+        logger.info("=" * 70)
+        logger.info(f"🎯 Processant transcripció: {transcription}")
+        logger.info(f"📞 Telèfon: {phone}")
+        logger.info(f"🆔 CallSid: {call_sid}")
+        logger.info("=" * 70)
+
         if not transcription or transcription.strip() == '':
-            print("⚠️  [VOICE_HANDLER] Transcripció buida!")
             return self.create_error_response()
-        
-        # Netejar prefix
+
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
-        print(f"📱 [VOICE_HANDLER] Telèfon net: {clean_phone}")
-        
-        # Obtenir idioma del client
-        language = self.appointment_manager.get_customer_language(clean_phone)
-        if not language:
-            print("🌍 [VOICE_HANDLER] Client nou, idioma per defecte: es")
-            language = 'es'
-        else:
-            print(f"🌍 [VOICE_HANDLER] Idioma del client: {language}")
-        
-        # Detectar si vol acabar
+        language = self.appointment_manager.get_customer_language(clean_phone) or 'es'
+
         if self.wants_to_end(transcription, language):
-            print("🚪 [VOICE_HANDLER] Client vol acabar la conversa")
             response = VoiceResponse()
             voice = self.get_voice_for_language(language)
             lang_code = self.get_language_code(language)
-            
             goodbye = self.GOODBYE_MESSAGES.get(language, self.GOODBYE_MESSAGES['es'])
             response.say(goodbye, language=lang_code, voice=voice)
             response.hangup()
-            print("👋 [VOICE_HANDLER] Enviant comiat i penjant")
             return response
-        
-        # Processar amb IA
+
         try:
-            print("🧠 [VOICE_HANDLER] Cridant a process_message_with_ai...")
-            ai_response = process_message_with_ai(
+            ai_response = process_voice_with_ai(
                 transcription,
                 clean_phone,
                 self.appointment_manager,
                 self.conversation_manager
             )
-            
-            print(f"✅ [VOICE_HANDLER] Resposta IA rebuda: '{ai_response[:100]}...'")
-            
-            # Actualitzar idioma si ha canviat
+
+            if not ai_response or not ai_response.strip():
+                ai_response = "Perdona, pots repetir-ho?"
+
             new_language = self.appointment_manager.get_customer_language(clean_phone)
             if new_language and new_language != language:
-                print(f"🌍 [VOICE_HANDLER] Idioma actualitzat: {language} → {new_language}")
                 language = new_language
-            
-            # Crear resposta i continuar
-            print("📤 [VOICE_HANDLER] Creant resposta per continuar conversa...")
-            return self.create_response_and_continue(
-                ai_response,
-                language,
-                clean_phone,
-                should_continue=True
-            )
-            
+
+            return self.create_response_and_continue(ai_response, language, clean_phone, should_continue=True)
+
         except Exception as e:
-            print(f"❌ [VOICE_HANDLER] ERROR processant amb IA: {e}")
-            import traceback
-            print("📋 [VOICE_HANDLER] Traceback:")
-            traceback.print_exc()
+            logger.exception(f"❌ Error processant amb IA: {e}")
             return self.create_error_response(language)
-    
+
+    # ======================================================================
+    # RESPOSTES D'ERROR I TIMEOUT
+    # ======================================================================
     def create_error_response(self, language='es'):
-        print(f"⚠️  [VOICE_HANDLER] Creant resposta d'error (idioma: {language})")
         response = VoiceResponse()
-        
         voice = self.get_voice_for_language(language)
         lang_code = self.get_language_code(language)
-        
+
         error_messages = {
             'ca': "Ho sento, no t'he entès bé. Pots repetir-ho?",
             'es': "Lo siento, no te he entendido bien. ¿Puedes repetirlo?",
             'en': "Sorry, I didn't understand that. Can you repeat?"
         }
-        
-        error_msg = error_messages.get(language, error_messages['es'])
-        print(f"💬 [VOICE_HANDLER] Missatge error: '{error_msg}'")
-        response.say(error_msg, language=lang_code, voice=voice)
-        
-        # Continuar escoltant
-        print("🎤 [VOICE_HANDLER] Configurant nova gravació després d'error...")
-        response.record(
+
+        response.say(error_messages.get(language, error_messages['es']),
+                     language=lang_code, voice=voice)
+
+        response.gather(
+            input='speech',
             action='/voice/process',
             method='POST',
-            max_length=30,
+            language=lang_code,
             timeout=5,
-            transcribe=True,
-            transcribeCallback='/voice/transcription',
-            play_beep=False,
-            finish_on_key='#'
+            speech_timeout='auto'
         )
-        
+
         return response
-    
+
     def handle_timeout(self, language='es'):
-        print(f"⏰ [VOICE_HANDLER] Gestionant timeout (idioma: {language})")
         response = VoiceResponse()
-        
         voice = self.get_voice_for_language(language)
         lang_code = self.get_language_code(language)
-        
+
         timeout_messages = {
             'ca': "Sembla que no t'he sentit. Si vols continuar, torna a trucar. Adeu!",
-            'es': "Parece que no te he escuchado. Si quieres continuar, vuelve a llamar. Adiós!",
+            'es': "Parece que no te he escuchado. Si quieres continuar, vuelve a llamar. ¡Adiós!",
             'en': "It seems I did not hear you. If you want to continue, call back. Goodbye!"
         }
-        
-        timeout_msg = timeout_messages.get(language, timeout_messages['es'])
-        print(f"💬 [VOICE_HANDLER] Missatge timeout: '{timeout_msg}'")
-        response.say(timeout_msg, language=lang_code, voice=voice)
+
+        response.say(timeout_messages.get(language, timeout_messages['es']),
+                     language=lang_code, voice=voice)
         response.hangup()
-        print("📞 [VOICE_HANDLER] Penjant per timeout")
-        
         return response
