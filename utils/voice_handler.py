@@ -18,9 +18,9 @@ class VoiceHandler:
 
     # Veus naturals per idioma (Twilio Polly)
     VOICES = {
-        'ca': 'Polly.Lucia',   # Twilio no suporta català, s’usa veu espanyola
-        'es': 'Polly.Lucia',
-        'en': 'Polly.Joanna'
+        'ca': 'Google.es-ES-Neural2-A',  # Veu femenina espanyola
+        'es': 'Google.es-ES-Neural2-C',  # Veu masculina espanyola
+        'en': 'Google.en-US-Neural2-F'   # Veu femenina anglesa
     }
 
     LANGUAGE_CODES = {
