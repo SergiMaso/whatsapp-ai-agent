@@ -122,8 +122,8 @@ class VoiceHandler:
 
         # Escollir missatge de benvinguda
         if saved_customer:
-            greeting = self.GREETINGS_WITH_KNOWN_CUSTOMER.get(language, self.GREETINGS_WITH_KNOWN_CUSTOMER['es'])
-            greeting = greeting.format(saved_customer)
+            greeting_template = self.GREETINGS_WITH_KNOWN_CUSTOMER.get(language, self.GREETINGS_WITH_KNOWN_CUSTOMER['es'])
+            greeting = greeting_template.replace('{saved_customer}', saved_customer)
         else:
             greeting = self.GREETINGS.get(language, self.GREETINGS['es'])
 
