@@ -289,8 +289,9 @@ IMPORTANT: NO follow-up questions. Just confirm the reservation."""
         
         # Usar gpt-4o-mini per rapidesa
         response = client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             messages=messages,
+            temperature=0.7,
             max_tokens=150,  # Limitar tokens per respostes curtes
             tools=[
                 {
