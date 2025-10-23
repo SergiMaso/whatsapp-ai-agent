@@ -115,7 +115,7 @@ class VoiceHandler:
         logger.info(f"📞 Creant resposta inicial (idioma: {language})")
 
         response = VoiceResponse()
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        clean_phone = (phone or '').replace('whatsapp:', '').replace('telegram:', '')
 
         language = self.appointment_manager.get_customer_language(clean_phone) or 'es'
         saved_customer = self.appointment_manager.get_customer_name(clean_phone)
