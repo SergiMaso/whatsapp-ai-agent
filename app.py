@@ -1597,7 +1597,11 @@ def voice_webhook():
     try:
         phone = request.values.get('From', '')
         call_sid = request.values.get('CallSid', '')
+        
+        # LOGS DETALLATS - Request complet
         logger.info(f"📞 De: {phone}, CallSid: {call_sid}")
+        logger.info(f"📋 Request.values complet: {dict(request.values)}")
+        logger.info(f"🔑 Headers rebuts: {dict(request.headers)}")
 
         # Netejar prefix si cal
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
@@ -1608,12 +1612,24 @@ def voice_webhook():
         
         # WebSocket stream a Eleven Labs
         ws_url = elevenlabs_manager.get_websocket_url(phone=clean_phone)
-        logger.info(f"🌐 Connectant a: {ws_url}")
+        
+        # LOGS DETALLATS - WebSocket URL
+        logger.info(f"🌐 WebSocket URL generada: {ws_url}")
+        logger.info(f"🔍 Tipus URL: {type(ws_url)}, Longitud: {len(ws_url) if ws_url else 0}")
+        
+        # Verificar que la URL sigui vàlida
+        if not ws_url or not ws_url.startswith('wss://'):
+            logger.error(f"❌ URL WebSocket INVÀLIDA: '{ws_url}'")
+            raise ValueError(f"WebSocket URL invàlida: {ws_url}")
         
         connect.stream(url=ws_url)
         
+        # LOGS DETALLATS - TwiML generat
+        twiml_str = str(response)
+        logger.info(f"📤 TwiML Response generat:\n{twiml_str}")
         logger.info("✅ Redirecció a Eleven Labs configurada")
-        return str(response)
+        
+        return twiml_str
 
     except Exception as e:
         logger.exception("❌ Error en voice_webhook")
@@ -1702,11 +1718,19 @@ def voice_status():
     call_status = request.values.get('CallStatus', '')
     phone = request.values.get('From', '')
     call_sid = request.values.get('CallSid', '')
-
+    
+    # LOGS DETALLATS - Tota la informació del status
+    call_duration = request.values.get('CallDuration', '0')
+    recording_duration = request.values.get('RecordingDuration', '0')
+    
     logger.info(f"📊 Estat de trucada: {call_status} | Telèfon: {phone} | CallSid: {call_sid}")
+    logger.info(f"⏱️ Duració trucada: {call_duration} segons")
+    logger.info(f"📋 Status.values complet: {dict(request.values)}")
 
     if call_status == 'completed':
         logger.info(f"✅ Trucada completada: {call_sid}")
+        if int(call_duration) < 3:
+            logger.warning(f"⚠️ TRUCADA MASSA CURTA! Només {call_duration}s - possiblement connexió WebSocket fallida")
     elif call_status == 'failed':
         logger.warning(f"❌ Trucada fallida: {call_sid}")
     elif call_status == 'busy':

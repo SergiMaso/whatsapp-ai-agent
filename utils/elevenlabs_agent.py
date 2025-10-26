@@ -223,12 +223,19 @@ IMPORTANT:
         Retorna la URL del WebSocket per connectar Twilio amb Eleven Labs
         Inclou variables dinàmiques com a query parameters
         """
+        logger.info(f"🔧 Generant WebSocket URL...")
+        logger.info(f"📞 Phone: {phone}")
+        logger.info(f"👤 Customer name: {customer_name}")
+        logger.info(f"🌐 Language: {language}")
+        logger.info(f"🆔 Agent ID: {self.agent_id}")
+        
         if not self.agent_id:
             logger.error("⚠️  ELEVEN_LABS_AGENT_ID no configurat!")
             raise ValueError("Necessites crear l'agent primer i guardar el AGENT_ID al .env")
         
         # URL base del WebSocket
         ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self.agent_id}"
+        logger.info(f"✅ WebSocket URL base generada: {ws_url}")
         
         # # Afegir informació del client com a query parameters
         # if phone:
@@ -244,6 +251,7 @@ IMPORTANT:
         # else:
         #     ws_url += "&language=es"
         
+        logger.info(f"🎯 WebSocket URL final: {ws_url}")
         return ws_url
 
 
