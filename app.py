@@ -1737,40 +1737,40 @@ def voice_hangup():
 # ==========================================
 
 
-@app.route('/voice', methods=['POST'])
-def voice_webhook():
-    """
-    📞 Endpoint inicial quan es rep una trucada telefònica
-    """
-    logger.info("📞 Trucada rebuda! Redirigint a Eleven Labs...")
+# @app.route('/voice', methods=['POST'])
+# def voice_webhook():
+#     """
+#     📞 Endpoint inicial quan es rep una trucada telefònica
+#     """
+#     logger.info("📞 Trucada rebuda! Redirigint a Eleven Labs...")
 
-    try:
-        phone = request.values.get('From', '')
-        call_sid = request.values.get('CallSid', '')
-        logger.info(f"📞 De: {phone}, CallSid: {call_sid}")
+#     try:
+#         phone = request.values.get('From', '')
+#         call_sid = request.values.get('CallSid', '')
+#         logger.info(f"📞 De: {phone}, CallSid: {call_sid}")
 
-        response = VoiceResponse()
-        connect = response.connect()
+#         response = VoiceResponse()
+#         connect = response.connect()
         
-        # WebSocket SIMPLE
-        ws_url = elevenlabs_manager.get_websocket_url()
-        logger.info(f"🌐 Connectant a: {ws_url}")
+#         # WebSocket SIMPLE
+#         ws_url = elevenlabs_manager.get_websocket_url()
+#         logger.info(f"🌐 Connectant a: {ws_url}")
         
-        connect.stream(url=ws_url)
+#         connect.stream(url=ws_url)
         
-        logger.info("✅ Redirecció a Eleven Labs configurada")
-        return str(response)
+#         logger.info("✅ Redirecció a Eleven Labs configurada")
+#         return str(response)
 
-    except Exception as e:
-        logger.exception("❌ Error en voice_webhook")
-        response = VoiceResponse()
-        response.say(
-            "Lo siento, ha ocurrido un error.",
-            language='es-ES',
-            voice='Google.es-ES-Neural2-C'
-        )
-        response.hangup()
-        return str(response)
+#     except Exception as e:
+#         logger.exception("❌ Error en voice_webhook")
+#         response = VoiceResponse()
+#         response.say(
+#             "Lo siento, ha ocurrido un error.",
+#             language='es-ES',
+#             voice='Google.es-ES-Neural2-C'
+#         )
+#         response.hangup()
+#         return str(response)
 
 @app.route('/elevenlabs/create_appointment', methods=['POST'])
 def elevenlabs_create_appointment():
