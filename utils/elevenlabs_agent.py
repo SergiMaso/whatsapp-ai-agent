@@ -238,21 +238,21 @@ IMPORTANT:
         ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self.agent_id}"
         logger.info(f"✅ WebSocket URL base generada: {ws_url}")
         
-        # Afegir informació del client com a query parameters (amb URL encoding)
-        if phone:
-            # Netejar el + del principi si existeix
-            clean_phone = phone.replace('+', '')
-            ws_url += f"&phone={quote(clean_phone)}"
+        # # Afegir informació del client com a query parameters (amb URL encoding)
+        # if phone:
+        #     # Netejar el + del principi si existeix
+        #     clean_phone = phone.replace('+', '')
+        #     ws_url += f"&phone={quote(clean_phone)}"
         
-        if customer_name:
-            ws_url += f"&saved_customer={quote(customer_name)}"
-        else:
-            ws_url += f"&saved_customer={quote('Cliente Nuevo')}"
+        # if customer_name:
+        #     ws_url += f"&saved_customer={quote(customer_name)}"
+        # else:
+        #     ws_url += f"&saved_customer={quote('Cliente Nuevo')}"
         
-        if language:
-            ws_url += f"&language={quote(language)}"
-        else:
-            ws_url += "&language=es"
+        # if language:
+        #     ws_url += f"&language={quote(language)}"
+        # else:
+        #     ws_url += "&language=es"
         
         logger.info(f"🎯 WebSocket URL final: {ws_url}")
         return ws_url
