@@ -1597,11 +1597,7 @@ def voice_webhook():
     try:
         phone = request.values.get('From', '')
         call_sid = request.values.get('CallSid', '')
-        
-        # LOGS DETALLATS - Request complet
         logger.info(f"📞 De: {phone}, CallSid: {call_sid}")
-        logger.info(f"📋 Request.values complet: {dict(request.values)}")
-        logger.info(f"🔑 Headers rebuts: {dict(request.headers)}")
 
         # Netejar prefix si cal
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
@@ -1612,24 +1608,12 @@ def voice_webhook():
         
         # WebSocket stream a Eleven Labs
         ws_url = elevenlabs_manager.get_websocket_url(phone=clean_phone)
-        
-        # LOGS DETALLATS - WebSocket URL
-        logger.info(f"🌐 WebSocket URL generada: {ws_url}")
-        logger.info(f"🔍 Tipus URL: {type(ws_url)}, Longitud: {len(ws_url) if ws_url else 0}")
-        
-        # Verificar que la URL sigui vàlida
-        if not ws_url or not ws_url.startswith('wss://'):
-            logger.error(f"❌ URL WebSocket INVÀLIDA: '{ws_url}'")
-            raise ValueError(f"WebSocket URL invàlida: {ws_url}")
+        logger.info(f"🌐 Connectant a: {ws_url}")
         
         connect.stream(url=ws_url)
         
-        # LOGS DETALLATS - TwiML generat
-        twiml_str = str(response)
-        logger.info(f"📤 TwiML Response generat:\n{twiml_str}")
         logger.info("✅ Redirecció a Eleven Labs configurada")
-        
-        return twiml_str
+        return str(response)
 
     except Exception as e:
         logger.exception("❌ Error en voice_webhook")
@@ -1718,19 +1702,11 @@ def voice_status():
     call_status = request.values.get('CallStatus', '')
     phone = request.values.get('From', '')
     call_sid = request.values.get('CallSid', '')
-    
-    # LOGS DETALLATS - Tota la informació del status
-    call_duration = request.values.get('CallDuration', '0')
-    recording_duration = request.values.get('RecordingDuration', '0')
-    
+
     logger.info(f"📊 Estat de trucada: {call_status} | Telèfon: {phone} | CallSid: {call_sid}")
-    logger.info(f"⏱️ Duració trucada: {call_duration} segons")
-    logger.info(f"📋 Status.values complet: {dict(request.values)}")
 
     if call_status == 'completed':
         logger.info(f"✅ Trucada completada: {call_sid}")
-        if int(call_duration) < 3:
-            logger.warning(f"⚠️ TRUCADA MASSA CURTA! Només {call_duration}s - possiblement connexió WebSocket fallida")
     elif call_status == 'failed':
         logger.warning(f"❌ Trucada fallida: {call_sid}")
     elif call_status == 'busy':
@@ -1761,38 +1737,40 @@ def voice_hangup():
 # ==========================================
 
 
-@app.route('/elevenlabs/init', methods=['POST'])
-def elevenlabs_init():
+@app.route('/voice', methods=['POST'])
+def voice_webhook():
     """
-    Webhook cridat per ElevenLabs quan comença una conversa
-    Retorna les dades del client (nom, idioma, etc.)
+    📞 Endpoint inicial quan es rep una trucada telefònica
     """
+    logger.info("📞 Trucada rebuda! Redirigint a Eleven Labs...")
+
     try:
-        data = request.json
-        logger.info(f"🔄 [ELEVEN LABS] Init cridat amb: {data}")
+        phone = request.values.get('From', '')
+        call_sid = request.values.get('CallSid', '')
+        logger.info(f"📞 De: {phone}, CallSid: {call_sid}")
+
+        response = VoiceResponse()
+        connect = response.connect()
         
-        # Obtenir telèfon de Twilio
-        phone = data.get('call', {}).get('from', '')
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '')
+        # WebSocket SIMPLE
+        ws_url = elevenlabs_manager.get_websocket_url()
+        logger.info(f"🌐 Connectant a: {ws_url}")
         
-        # Buscar client a la BD
-        customer_name = appointment_manager.get_customer_name(clean_phone)
-        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+        connect.stream(url=ws_url)
         
-        # Retornar variables dinàmiques
-        return jsonify({
-            'phone': clean_phone,
-            'saved_customer': customer_name or 'Cliente Nuevo',
-            'language': language
-        }), 200
-    
+        logger.info("✅ Redirecció a Eleven Labs configurada")
+        return str(response)
+
     except Exception as e:
-        logger.exception(f"❌ Error en elevenlabs_init: {e}")
-        return jsonify({
-            'phone': '',
-            'saved_customer': 'Cliente',
-            'language': 'es'
-        }), 500
+        logger.exception("❌ Error en voice_webhook")
+        response = VoiceResponse()
+        response.say(
+            "Lo siento, ha ocurrido un error.",
+            language='es-ES',
+            voice='Google.es-ES-Neural2-C'
+        )
+        response.hangup()
+        return str(response)
 
 @app.route('/elevenlabs/create_appointment', methods=['POST'])
 def elevenlabs_create_appointment():
