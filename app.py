@@ -1772,32 +1772,49 @@ def elevenlabs_init():
     Webhook cridat per ElevenLabs quan comença una conversa
     Retorna les dades del client (nom, idioma, etc.)
     """
+    logger.info("=" * 70)
+    logger.info("🔄 [ELEVEN LABS INIT] Webhook cridat!")
+    logger.info("=" * 70)
+    
     try:
         data = request.json
-        logger.info(f"🔄 [ELEVEN LABS] Init cridat amb: {data}")
+        logger.info(f"📋 [ELEVEN LABS INIT] Dades rebudes: {data}")
+        logger.info(f"🔑 [ELEVEN LABS INIT] Headers: {dict(request.headers)}")
         
         # Obtenir telèfon de Twilio
         phone = data.get('call', {}).get('from', '')
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '')
         
+        logger.info(f"📞 [ELEVEN LABS INIT] Telèfon extret: {clean_phone}")
+        
         # Buscar client a la BD
         customer_name = appointment_manager.get_customer_name(clean_phone)
         language = appointment_manager.get_customer_language(clean_phone) or 'es'
         
+        logger.info(f"👤 [ELEVEN LABS INIT] Client: {customer_name}")
+        logger.info(f"🌐 [ELEVEN LABS INIT] Idioma: {language}")
+        
         # Retornar variables dinàmiques
-        return jsonify({
+        response_data = {
             'phone': clean_phone,
             'saved_customer': customer_name or 'Cliente Nuevo',
             'language': language
-        }), 200
+        }
+        
+        logger.info(f"✅ [ELEVEN LABS INIT] Retornant: {response_data}")
+        logger.info("=" * 70)
+        
+        return jsonify(response_data), 200
     
     except Exception as e:
-        logger.exception(f"❌ Error en elevenlabs_init: {e}")
-        return jsonify({
+        logger.exception(f"❌ [ELEVEN LABS INIT] Error: {e}")
+        fallback_data = {
             'phone': '',
             'saved_customer': 'Cliente',
             'language': 'es'
-        }), 500
+        }
+        logger.info(f"⚠️ [ELEVEN LABS INIT] Retornant fallback: {fallback_data}")
+        return jsonify(fallback_data), 500
 
 @app.route('/elevenlabs/create_appointment', methods=['POST'])
 def elevenlabs_create_appointment():
