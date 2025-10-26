@@ -1622,13 +1622,19 @@ def voice_webhook():
 
         # Netejar prefix si cal
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        customer_name = appointment_manager.get_customer_name(clean_phone)
+        language = appointment_manager.get_customer_language(clean_phone) or 'es'
 
         # Crear resposta TwiML per connectar a Eleven Labs
         response = VoiceResponse()
         connect = response.connect()
         
-        # WebSocket stream a Eleven Labs
-        ws_url = elevenlabs_manager.get_websocket_url(phone=clean_phone)
+        # WebSocket stream a Eleven Labs AMB totes les dades
+        ws_url = elevenlabs_manager.get_websocket_url(
+            phone=clean_phone,
+            customer_name=customer_name,
+            language=language
+        )
         
         # LOGS DETALLATS - WebSocket URL
         logger.info(f"🌐 WebSocket URL generada: {ws_url}")
