@@ -1788,7 +1788,6 @@ def voice_hangup():
 # ELEVEN LABS - WEBHOOKS PER FUNCIONS
 # ==========================================
 
-
 @app.route('/elevenlabs/init', methods=['GET', 'POST'])
 def elevenlabs_init():
     """
@@ -1824,13 +1823,23 @@ def elevenlabs_init():
         logger.info(f"🔑 [ELEVEN LABS INIT] Headers: {dict(request.headers)}")
         logger.info(f"🔑 [ELEVEN LABS INIT] Content-Type: {request.content_type}")
         
-        # Obtenir telèfon de Twilio
-        phone = data.get('call', {}).get('from', '') if isinstance(data, dict) else ''
+        # Obtenir telèfon - ElevenLabs envia 'caller_id'
+        phone = ''
         
-        # Provar diferents formats de dades
+        if isinstance(data, dict):
+            # Format ElevenLabs (nou)
+            phone = data.get('caller_id', '')
+            
+            # Format antic (per compatibilitat)
+            if not phone:
+                phone = data.get('call', {}).get('from', '')
+        
+        # Provar form/values com a fallback
         if not phone:
             phone = request.form.get('From', '') or request.values.get('From', '')
             logger.info(f"📞 [ELEVEN LABS INIT] Telèfon extret de form/values: {phone}")
+        
+        logger.info(f"📞 [ELEVEN LABS INIT] Telèfon d'ElevenLabs: {phone}")
         
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '').replace('+', '')
         
