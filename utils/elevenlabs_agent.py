@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
 import logging
+from urllib.parse import quote
 
 load_dotenv()
 
@@ -221,7 +222,7 @@ IMPORTANT:
     def get_websocket_url(self, phone=None, customer_name=None, language=None):
         """
         Retorna la URL del WebSocket per connectar Twilio amb Eleven Labs
-        Inclou variables dinàmiques com a query parameters
+        Inclou variables dinàmiques com a query parameters amb URL encoding correcte
         """
         logger.info(f"🔧 Generant WebSocket URL...")
         logger.info(f"📞 Phone: {phone}")
@@ -237,17 +238,19 @@ IMPORTANT:
         ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self.agent_id}"
         logger.info(f"✅ WebSocket URL base generada: {ws_url}")
         
-        # Afegir informació del client com a query parameters
+        # Afegir informació del client com a query parameters (amb URL encoding)
         if phone:
-            ws_url += f"&phone={phone}"
+            # Netejar el + del principi si existeix
+            clean_phone = phone.replace('+', '')
+            ws_url += f"&phone={quote(clean_phone)}"
         
         if customer_name:
-            ws_url += f"&saved_customer={customer_name}"
+            ws_url += f"&saved_customer={quote(customer_name)}"
         else:
-            ws_url += "&saved_customer=Cliente Nuevo"
+            ws_url += f"&saved_customer={quote('Cliente Nuevo')}"
         
         if language:
-            ws_url += f"&language={language}"
+            ws_url += f"&language={quote(language)}"
         else:
             ws_url += "&language=es"
         
