@@ -121,6 +121,23 @@ def health():
     """Endpoint de salud"""
     return {"status": "ok", "message": "WhatsApp bot active and running"}
 
+@app.route('/elevenlabs/test')
+def elevenlabs_test():
+    """Endpoint de test per verificar que Eleven Labs pot arribar"""
+    logger.info("🧪 [TEST] Endpoint /elevenlabs/test cridat")
+    return jsonify({
+        "status": "ok",
+        "message": "ElevenLabs webhooks are reachable",
+        "endpoints": {
+            "init": "/elevenlabs/init",
+            "create_appointment": "/elevenlabs/create_appointment",
+            "list_appointments": "/elevenlabs/list_appointments",
+            "update_appointment": "/elevenlabs/update_appointment",
+            "cancel_appointment": "/elevenlabs/cancel_appointment"
+        },
+        "timestamp": datetime.now().isoformat()
+    }), 200
+
 # ========================================
 # API REST ENDPOINTS
 # ========================================
@@ -1766,37 +1783,66 @@ def voice_hangup():
 # ==========================================
 
 
-@app.route('/elevenlabs/init', methods=['POST'])
+@app.route('/elevenlabs/init', methods=['GET', 'POST'])
 def elevenlabs_init():
     """
     Webhook cridat per ElevenLabs quan comença una conversa
     Retorna les dades del client (nom, idioma, etc.)
     """
     logger.info("=" * 70)
-    logger.info("🔄 [ELEVEN LABS INIT] Webhook cridat!")
+    logger.info(f"🔄 [ELEVEN LABS INIT] Webhook cridat! Method: {request.method}")
+    logger.info(f"🔄 [ELEVEN LABS INIT] URL: {request.url}")
+    logger.info(f"🔄 [ELEVEN LABS INIT] Path: {request.path}")
     logger.info("=" * 70)
     
+    # Si és GET, retornar info de que el webhook està actiu
+    if request.method == 'GET':
+        logger.info("ℹ️ [ELEVEN LABS INIT] Request GET rebut - retornant status")
+        return jsonify({
+            'status': 'active',
+            'endpoint': '/elevenlabs/init',
+            'message': 'Webhook is ready to receive POST requests from ElevenLabs'
+        }), 200
+    
     try:
-        data = request.json
-        logger.info(f"📋 [ELEVEN LABS INIT] Dades rebudes: {data}")
+        # Intentar obtenir dades com JSON
+        try:
+            data = request.json
+            logger.info(f"📋 [ELEVEN LABS INIT] Dades JSON rebudes: {data}")
+        except Exception as json_error:
+            logger.warning(f"⚠️ [ELEVEN LABS INIT] No es pot parsejar JSON: {json_error}")
+            logger.info(f"📋 [ELEVEN LABS INIT] Raw data: {request.data}")
+            logger.info(f"📋 [ELEVEN LABS INIT] Form data: {request.form}")
+            data = {}
+        
         logger.info(f"🔑 [ELEVEN LABS INIT] Headers: {dict(request.headers)}")
+        logger.info(f"🔑 [ELEVEN LABS INIT] Content-Type: {request.content_type}")
         
         # Obtenir telèfon de Twilio
-        phone = data.get('call', {}).get('from', '')
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '')
+        phone = data.get('call', {}).get('from', '') if isinstance(data, dict) else ''
         
-        logger.info(f"📞 [ELEVEN LABS INIT] Telèfon extret: {clean_phone}")
+        # Provar diferents formats de dades
+        if not phone:
+            phone = request.form.get('From', '') or request.values.get('From', '')
+            logger.info(f"📞 [ELEVEN LABS INIT] Telèfon extret de form/values: {phone}")
+        
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '').replace('+', '')
+        
+        logger.info(f"📞 [ELEVEN LABS INIT] Telèfon final: {clean_phone}")
         
         # Buscar client a la BD
-        customer_name = appointment_manager.get_customer_name(clean_phone)
-        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+        customer_name = appointment_manager.get_customer_name(clean_phone) if clean_phone else None
+        language = appointment_manager.get_customer_language(clean_phone) if clean_phone else 'es'
+        
+        if not language:
+            language = 'es'
         
         logger.info(f"👤 [ELEVEN LABS INIT] Client: {customer_name}")
         logger.info(f"🌐 [ELEVEN LABS INIT] Idioma: {language}")
         
         # Retornar variables dinàmiques
         response_data = {
-            'phone': clean_phone,
+            'phone': clean_phone or '',
             'saved_customer': customer_name or 'Cliente Nuevo',
             'language': language
         }
