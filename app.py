@@ -13,6 +13,7 @@ from datetime import datetime
 from werkzeug.utils import secure_filename
 from utils.media_manager import MediaManager
 from utils.voice_handler import VoiceHandler
+from utils.elevenlabs_agent import elevenlabs_manager
 import logging
 from twilio.twiml.voice_response import VoiceResponse
 import time
@@ -1589,8 +1590,9 @@ def delete_customer_api(phone):
 def voice_webhook():
     """
     📞 Endpoint inicial quan es rep una trucada telefònica
+    Redirigeix a Eleven Labs Conversational AI
     """
-    logger.info("📞 Trucada rebuda!")
+    logger.info("📞 Trucada rebuda! Redirigint a Eleven Labs...")
 
     try:
         phone = request.values.get('From', '')
@@ -1600,12 +1602,17 @@ def voice_webhook():
         # Netejar prefix si cal
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
 
-        # Idioma del client (per defecte espanyol)
-        language = appointment_manager.get_customer_language(clean_phone) or 'es'
-        logger.info(f"🌍 Idioma detectat: {language}")
-
-        # Crear la resposta inicial de veu
-        response = voice_handler.create_initial_response(language, phone)
+        # Crear resposta TwiML per connectar a Eleven Labs
+        response = VoiceResponse()
+        connect = response.connect()
+        
+        # WebSocket stream a Eleven Labs
+        ws_url = elevenlabs_manager.get_websocket_url(phone=clean_phone)
+        logger.info(f"🌐 Connectant a: {ws_url}")
+        
+        connect.stream(url=ws_url)
+        
+        logger.info("✅ Redirecció a Eleven Labs configurada")
         return str(response)
 
     except Exception as e:
@@ -1614,75 +1621,75 @@ def voice_webhook():
         response.say(
             "Lo siento, ha ocurrido un error. Por favor, intenta llamar de nuevo más tarde.",
             language='es-ES',
-            voice='Polly.Lucia'
+            voice='Google.es-ES-Neural2-C'
         )
         response.hangup()
         return str(response)
 
-# --------------------------------------------------------------------------
-# ENDPOINT DE PROCESSAMENT DE LA CONVERSA
-# --------------------------------------------------------------------------
-@app.route('/voice/process', methods=['POST'])
-def voice_process():
-    """
-    🎤 Endpoint que processa el text transcrit de la veu de l'usuari
-    """
-    start_time = time.time()
-    logger.info("🎤 Processant entrada de veu...")
+# # --------------------------------------------------------------------------
+# # ENDPOINT DE PROCESSAMENT DE LA CONVERSA
+# # --------------------------------------------------------------------------
+# @app.route('/voice/process', methods=['POST'])
+# def voice_process():
+#     """
+#     🎤 Endpoint que processa el text transcrit de la veu de l'usuari
+#     """
+#     start_time = time.time()
+#     logger.info("🎤 Processant entrada de veu...")
 
-    try:
-        phone = request.values.get('From', '')
-        call_sid = request.values.get('CallSid', '')
-        speech_result = request.values.get('SpeechResult', '').strip()
+#     try:
+#         phone = request.values.get('From', '')
+#         call_sid = request.values.get('CallSid', '')
+#         speech_result = request.values.get('SpeechResult', '').strip()
 
-        logger.info(f"🎤 De: {phone}")
-        logger.info(f"🗣️ Text: '{speech_result}'")
+#         logger.info(f"🎤 De: {phone}")
+#         logger.info(f"🗣️ Text: '{speech_result}'")
 
-        if not speech_result:
-            return str(voice_handler.create_error_response())
+#         if not speech_result:
+#             return str(voice_handler.create_error_response())
 
-        # Processar transcripció (inclou IA + TTS)
-        response = voice_handler.process_transcription(speech_result, phone, call_sid)
+#         # Processar transcripció (inclou IA + TTS)
+#         response = voice_handler.process_transcription(speech_result, phone, call_sid)
         
-        total_time = time.time() - start_time
-        logger.info(f"⏱️ ENDPOINT TOTAL: {total_time:.2f}s")
+#         total_time = time.time() - start_time
+#         logger.info(f"⏱️ ENDPOINT TOTAL: {total_time:.2f}s")
         
-        return str(response)
+#         return str(response)
 
-    except Exception as e:
-        logger.exception("❌ Error en voice_process")
-        return str(voice_handler.create_error_response())
+#     except Exception as e:
+#         logger.exception("❌ Error en voice_process")
+#         return str(voice_handler.create_error_response())
 
-# --------------------------------------------------------------------------
-# CALLBACK DE TRANSCRIPCIÓ ASÍNCRONA
-# --------------------------------------------------------------------------
-@app.route('/voice/transcription', methods=['POST'])
-def voice_transcription():
-    """
-    📝 Callback que rep la transcripció de Twilio de manera asíncrona
-    """
-    logger.info("📝 Callback de transcripció rebut!")
+# # --------------------------------------------------------------------------
+# # CALLBACK DE TRANSCRIPCIÓ ASÍNCRONA
+# # --------------------------------------------------------------------------
+# @app.route('/voice/transcription', methods=['POST'])
+# def voice_transcription():
+#     """
+#     📝 Callback que rep la transcripció de Twilio de manera asíncrona
+#     """
+#     logger.info("📝 Callback de transcripció rebut!")
 
-    try:
-        transcription = request.values.get('TranscriptionText', '')
-        phone = request.values.get('From', '')
-        call_sid = request.values.get('CallSid', '')
-        transcription_sid = request.values.get('TranscriptionSid', '')
+#     try:
+#         transcription = request.values.get('TranscriptionText', '')
+#         phone = request.values.get('From', '')
+#         call_sid = request.values.get('CallSid', '')
+#         transcription_sid = request.values.get('TranscriptionSid', '')
 
-        logger.info(f"📝 Transcripció: '{transcription}'")
-        logger.info(f"📝 De: {phone}, CallSid: {call_sid}")
+#         logger.info(f"📝 Transcripció: '{transcription}'")
+#         logger.info(f"📝 De: {phone}, CallSid: {call_sid}")
 
-        if not transcription or transcription.strip() == '':
-            logger.warning("⚠️ Transcripció buida!")
-            return jsonify({'status': 'empty'}), 200
+#         if not transcription or transcription.strip() == '':
+#             logger.warning("⚠️ Transcripció buida!")
+#             return jsonify({'status': 'empty'}), 200
 
-        # Processar amb la IA
-        voice_handler.process_transcription(transcription, phone, call_sid)
-        return jsonify({'status': 'processed'}), 200
+#         # Processar amb la IA
+#         voice_handler.process_transcription(transcription, phone, call_sid)
+#         return jsonify({'status': 'processed'}), 200
 
-    except Exception as e:
-        logger.exception("❌ Error en voice_transcription")
-        return jsonify({'error': str(e)}), 500
+#     except Exception as e:
+#         logger.exception("❌ Error en voice_transcription")
+#         return jsonify({'error': str(e)}), 500
 
 # --------------------------------------------------------------------------
 # CALLBACK D'ESTAT DE LA TRUCADA
@@ -1723,6 +1730,304 @@ def voice_hangup():
 
     logger.info(f"👋 Trucada penjada | De: {phone} | Duració: {call_duration}s")
     return jsonify({'status': 'ok'}), 200
+
+
+# ==========================================
+# ELEVEN LABS - WEBHOOKS PER FUNCIONS
+# ==========================================
+
+
+@app.route('/elevenlabs/init', methods=['POST'])
+def elevenlabs_init():
+    """
+    Webhook cridat per ElevenLabs quan comença una conversa
+    Retorna les dades del client (nom, idioma, etc.)
+    """
+    try:
+        data = request.json
+        logger.info(f"🔄 [ELEVEN LABS] Init cridat amb: {data}")
+        
+        # Obtenir telèfon de Twilio
+        phone = data.get('call', {}).get('from', '')
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '')
+        
+        # Buscar client a la BD
+        customer_name = appointment_manager.get_customer_name(clean_phone)
+        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+        
+        # Retornar variables dinàmiques
+        return jsonify({
+            'phone': clean_phone,
+            'saved_customer': customer_name or 'Cliente Nuevo',
+            'language': language
+        }), 200
+    
+    except Exception as e:
+        logger.exception(f"❌ Error en elevenlabs_init: {e}")
+        return jsonify({
+            'phone': '',
+            'saved_customer': 'Cliente',
+            'language': 'es'
+        }), 500
+
+@app.route('/elevenlabs/create_appointment', methods=['POST'])
+def elevenlabs_create_appointment():
+    """
+    Webhook cridat per Eleven Labs quan vol crear una reserva
+    """
+    try:
+        data = request.json
+        logger.info(f"📞 [ELEVEN LABS] create_appointment cridat amb: {data}")
+        
+        # Obtenir dades
+        phone = data.get('customer_phone', '')
+        client_name = data.get('client_name')
+        date = data.get('date')
+        time = data.get('time')
+        num_people = data.get('num_people', 2)
+        
+        # Validar
+        if not all([client_name, date, time]):
+            return jsonify({
+                'success': False,
+                'message': 'Falta informació. Necessito nom, data i hora.'
+            }), 400
+        
+        if num_people < 1 or num_people > 8:
+            return jsonify({
+                'success': False,
+                'message': 'Solo aceptamos reservas de 1 a 8 personas.'
+            }), 400
+        
+        # Netejar prefix del telèfon
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        # Guardar info del client
+        appointment_manager.save_customer_info(clean_phone, client_name)
+        
+        # Crear reserva
+        result = appointment_manager.create_appointment(
+            phone=clean_phone,
+            client_name=client_name,
+            date=date,
+            time=time,
+            num_people=num_people,
+            duration_hours=1
+        )
+        
+        if result:
+            # Formatar data i hora de manera natural
+            from ai_processor_voice import format_date_natural, format_time_natural
+            language = appointment_manager.get_customer_language(clean_phone) or 'es'
+            date_natural = format_date_natural(date, language)
+            time_natural = format_time_natural(time, language)
+            
+            messages = {
+                'es': f"Reserva confirmada para {num_people} personas el {date_natural} a las {time_natural}. ¡Nos vemos!",
+                'ca': f"Reserva confirmada per {num_people} persones el {date_natural} a les {time_natural}. Ens veiem!",
+                'en': f"Reservation confirmed for {num_people} people on {date_natural} at {time_natural}. See you!"
+            }
+            
+            return jsonify({
+                'success': True,
+                'message': messages.get(language, messages['es'])
+            }), 200
+        else:
+            messages = {
+                'es': f"Lo siento, no hay mesas disponibles para {num_people} personas ese día a esa hora.",
+                'ca': f"Ho sento, no hi ha taules disponibles per {num_people} persones aquell dia a aquesta hora.",
+                'en': f"Sorry, no tables available for {num_people} people at that time."
+            }
+            language = appointment_manager.get_customer_language(clean_phone) or 'es'
+            
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 409
+    
+    except Exception as e:
+        logger.exception(f"❌ Error en elevenlabs_create_appointment: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Ha ocurrido un error. ¿Puedes repetir los datos?'
+        }), 500
+
+
+@app.route('/elevenlabs/list_appointments', methods=['POST'])
+def elevenlabs_list_appointments():
+    """
+    Webhook cridat per Eleven Labs quan vol llistar reserves
+    """
+    try:
+        data = request.json
+        logger.info(f"📞 [ELEVEN LABS] list_appointments cridat amb: {data}")
+        
+        phone = data.get('customer_phone', '')
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        # Obtenir reserves
+        appointments = appointment_manager.get_appointments(clean_phone)
+        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+        
+        if not appointments:
+            messages = {
+                'es': "No tienes reservas programadas.",
+                'ca': "No tens reserves programades.",
+                'en': "You don't have any scheduled reservations."
+            }
+            return jsonify({
+                'success': True,
+                'message': messages.get(language, messages['es'])
+            }), 200
+        
+        # Només la primera reserva (simplificat per veu)
+        apt = appointments[0]
+        apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
+        
+        # Formatar de manera natural
+        from ai_processor_voice import format_date_natural, format_time_natural
+        date_natural = format_date_natural(date, language)
+        time_natural = format_time_natural(start_time, language)
+        
+        messages = {
+            'es': f"Tienes reserva el {date_natural} a las {time_natural} para {num_people} personas.",
+            'ca': f"Tens reserva el {date_natural} a les {time_natural} per {num_people} persones.",
+            'en': f"You have a reservation on {date_natural} at {time_natural} for {num_people} people."
+        }
+        
+        return jsonify({
+            'success': True,
+            'message': messages.get(language, messages['es']),
+            'appointment_id': apt_id
+        }), 200
+    
+    except Exception as e:
+        logger.exception(f"❌ Error en elevenlabs_list_appointments: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error consultando reservas.'
+        }), 500
+
+
+@app.route('/elevenlabs/update_appointment', methods=['POST'])
+def elevenlabs_update_appointment():
+    """
+    Webhook cridat per Eleven Labs quan vol modificar una reserva
+    """
+    try:
+        data = request.json
+        logger.info(f"📞 [ELEVEN LABS] update_appointment cridat amb: {data}")
+        
+        phone = data.get('customer_phone', '')
+        apt_id = data.get('appointment_id')
+        new_date = data.get('new_date')
+        new_time = data.get('new_time')
+        new_num_people = data.get('new_num_people')
+        
+        if not apt_id:
+            return jsonify({
+                'success': False,
+                'message': 'Necesito el ID de la reserva.'
+            }), 400
+        
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        # Actualitzar
+        result = appointment_manager.update_appointment(
+            phone=clean_phone,
+            appointment_id=apt_id,
+            new_date=new_date,
+            new_time=new_time,
+            new_num_people=new_num_people
+        )
+        
+        if result:
+            messages = {
+                'es': "Reserva actualizada correctamente.",
+                'ca': "Reserva actualitzada correctament.",
+                'en': "Reservation updated successfully."
+            }
+            language = appointment_manager.get_customer_language(clean_phone) or 'es'
+            
+            return jsonify({
+                'success': True,
+                'message': messages.get(language, messages['es'])
+            }), 200
+        else:
+            messages = {
+                'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles.",
+                'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles.",
+                'en': "Could not update the reservation. There might not be tables available."
+            }
+            language = appointment_manager.get_customer_language(clean_phone) or 'es'
+            
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 409
+    
+    except Exception as e:
+        logger.exception(f"❌ Error en elevenlabs_update_appointment: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error actualizando la reserva.'
+        }), 500
+
+
+@app.route('/elevenlabs/cancel_appointment', methods=['POST'])
+def elevenlabs_cancel_appointment():
+    """
+    Webhook cridat per Eleven Labs quan vol cancel·lar una reserva
+    """
+    try:
+        data = request.json
+        logger.info(f"📞 [ELEVEN LABS] cancel_appointment cridat amb: {data}")
+        
+        phone = data.get('customer_phone', '')
+        apt_id = data.get('appointment_id')
+        
+        if not apt_id:
+            return jsonify({
+                'success': False,
+                'message': 'Necesito el ID de la reserva.'
+            }), 400
+        
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        
+        # Cancel·lar
+        success = appointment_manager.cancel_appointment(clean_phone, apt_id)
+        
+        if success:
+            messages = {
+                'es': "Reserva cancelada correctamente.",
+                'ca': "Reserva cancel·lada correctament.",
+                'en': "Reservation cancelled successfully."
+            }
+            language = appointment_manager.get_customer_language(clean_phone) or 'es'
+            
+            return jsonify({
+                'success': True,
+                'message': messages.get(language, messages['es'])
+            }), 200
+        else:
+            messages = {
+                'es': "No se pudo cancelar la reserva.",
+                'ca': "No s'ha pogut cancel·lar la reserva.",
+                'en': "Could not cancel the reservation."
+            }
+            language = appointment_manager.get_customer_language(clean_phone) or 'es'
+            
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 400
+    
+    except Exception as e:
+        logger.exception(f"❌ Error en elevenlabs_cancel_appointment: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error cancelando la reserva.'
+        }), 500
 
 # --------------------------------------------------------------------------
 # MAIN

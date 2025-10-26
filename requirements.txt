@@ -12,3 +12,5 @@ python-telegram-bot
 apscheduler
 pytz
 cloudinary
+elevenlabs
+gunicorn
