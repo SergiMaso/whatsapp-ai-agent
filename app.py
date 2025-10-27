@@ -1841,7 +1841,8 @@ def elevenlabs_init():
         
         logger.info(f"📞 [ELEVEN LABS INIT] Telèfon d'ElevenLabs: {phone}")
         
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '').replace('+', '')
+        # Netejar prefixos però MANTENIR el +
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').replace('client:', '')
         
         logger.info(f"📞 [ELEVEN LABS INIT] Telèfon final: {clean_phone}")
         
@@ -1955,8 +1956,10 @@ def elevenlabs_create_appointment():
                 'message': 'Solo aceptamos reservas de 1 a 8 personas.'
             }), 400
         
-        # Netejar prefix del telèfon
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        # Netejar només prefixos de plataforma (mantenir el + i els dígits)
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
+        
+        logger.info(f"🧹 [ELEVEN LABS CREATE] Telèfon per guardar a BD: {clean_phone}")
         
         # Guardar info del client
         appointment_manager.save_customer_info(clean_phone, client_name)
@@ -2018,8 +2021,8 @@ def elevenlabs_list_appointments():
         data = request.json
         logger.info(f"📞 [ELEVEN LABS] list_appointments cridat amb: {data}")
         
-        phone = data.get('customer_phone', '')
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        phone = data.get('customer_phone', data.get('phone', ''))
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
         
         # Obtenir reserves
         appointments = appointment_manager.get_appointments(clean_phone)
@@ -2074,7 +2077,7 @@ def elevenlabs_update_appointment():
         data = request.json
         logger.info(f"📞 [ELEVEN LABS] update_appointment cridat amb: {data}")
         
-        phone = data.get('customer_phone', '')
+        phone = data.get('customer_phone', data.get('phone', ''))
         apt_id = data.get('appointment_id')
         new_date = data.get('new_date')
         new_time = data.get('new_time')
@@ -2086,7 +2089,7 @@ def elevenlabs_update_appointment():
                 'message': 'Necesito el ID de la reserva.'
             }), 400
         
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
         
         # Actualitzar
         result = appointment_manager.update_appointment(
@@ -2139,7 +2142,7 @@ def elevenlabs_cancel_appointment():
         data = request.json
         logger.info(f"📞 [ELEVEN LABS] cancel_appointment cridat amb: {data}")
         
-        phone = data.get('customer_phone', '')
+        phone = data.get('customer_phone', data.get('phone', ''))
         apt_id = data.get('appointment_id')
         
         if not apt_id:
@@ -2148,7 +2151,7 @@ def elevenlabs_cancel_appointment():
                 'message': 'Necesito el ID de la reserva.'
             }), 400
         
-        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
         
         # Cancel·lar
         success = appointment_manager.cancel_appointment(clean_phone, apt_id)
