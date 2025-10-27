@@ -1877,7 +1877,7 @@ def elevenlabs_init():
         logger.info(f"⚠️ [ELEVEN LABS INIT] Retornant fallback: {fallback_data}")
         return jsonify(fallback_data), 500
 
-@app.route('/elevenlabs/create_appointment', methods=['POST'])
+@app.route('/elevenlabs/tool/create_appointment', methods=['POST'])
 def elevenlabs_create_appointment():
     """
     Webhook cridat per Eleven Labs quan vol crear una reserva
@@ -1968,7 +1968,7 @@ def elevenlabs_create_appointment():
         }), 500
 
 
-@app.route('/elevenlabs/list_appointments', methods=['POST'])
+@app.route('/elevenlabs/tool/list_appointments', methods=['POST'])
 def elevenlabs_list_appointments():
     """
     Webhook cridat per Eleven Labs quan vol llistar reserves
@@ -2024,7 +2024,7 @@ def elevenlabs_list_appointments():
         }), 500
 
 
-@app.route('/elevenlabs/update_appointment', methods=['POST'])
+@app.route('/elevenlabs/tool/update_appointment', methods=['POST'])
 def elevenlabs_update_appointment():
     """
     Webhook cridat per Eleven Labs quan vol modificar una reserva
@@ -2089,7 +2089,7 @@ def elevenlabs_update_appointment():
         }), 500
 
 
-@app.route('/elevenlabs/cancel_appointment', methods=['POST'])
+@app.route('/elevenlabs/tool/cancel_appointment', methods=['POST'])
 def elevenlabs_cancel_appointment():
     """
     Webhook cridat per Eleven Labs quan vol cancel·lar una reserva
