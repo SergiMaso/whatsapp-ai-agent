@@ -1885,6 +1885,8 @@ def elevenlabs_create_appointment():
     try:
         data = request.json
         logger.info(f"📞 [ELEVEN LABS] create_appointment cridat amb: {data}")
+        logger.info(f"📞 [ELEVEN LABS CREATE] Dades rebudes: {data}")
+        logger.info(f"📞 [ELEVEN LABS CREATE] Headers: {dict(request.headers)}")
         
         # Obtenir dades
         phone = data.get('customer_phone', '')
@@ -1892,6 +1894,12 @@ def elevenlabs_create_appointment():
         date = data.get('date')
         time = data.get('time')
         num_people = data.get('num_people', 2)
+
+        logger.info(f"📋 [ELEVEN LABS CREATE] Phone: {phone}")
+        logger.info(f"📋 [ELEVEN LABS CREATE] Name: {client_name}")
+        logger.info(f"📋 [ELEVEN LABS CREATE] Date: {date}")
+        logger.info(f"📋 [ELEVEN LABS CREATE] Time: {time}")
+        logger.info(f"📋 [ELEVEN LABS CREATE] People: {num_people}")
         
         # Validar
         if not all([client_name, date, time]):
@@ -1924,7 +1932,7 @@ def elevenlabs_create_appointment():
         
         if result:
             # Formatar data i hora de manera natural
-            from ai_processor_voice import format_date_natural, format_time_natural
+            from utils.ai_processor_voice import format_date_natural, format_time_natural
             language = appointment_manager.get_customer_language(clean_phone) or 'es'
             date_natural = format_date_natural(date, language)
             time_natural = format_time_natural(time, language)
