@@ -1792,7 +1792,7 @@ def voice_hangup():
 def elevenlabs_init():
     """
     Webhook cridat per ElevenLabs quan comença una conversa
-    Retorna les dades del client (nom, idioma, etc.)
+    Retorna les dades del client (nom, idioma, data actual, telèfon)
     """
     logger.info("=" * 70)
     logger.info(f"🔄 [ELEVEN LABS INIT] Webhook cridat! Method: {request.method}")
@@ -1855,11 +1855,46 @@ def elevenlabs_init():
         logger.info(f"👤 [ELEVEN LABS INIT] Client: {customer_name}")
         logger.info(f"🌐 [ELEVEN LABS INIT] Idioma: {language}")
         
-        # Retornar variables dinàmiques
+        # Obtenir data actual
+        from datetime import datetime
+        import locale
+        
+        today = datetime.now()
+        
+        # Formatar segons idioma
+        day_names = {
+            'es': ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'],
+            'ca': ['dilluns', 'dimarts', 'dimecres', 'dijous', 'divendres', 'dissabte', 'diumenge'],
+            'en': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        }
+        
+        month_names = {
+            'es': ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'],
+            'ca': ['gener', 'febrer', 'març', 'abril', 'maig', 'juny', 'juliol', 'agost', 'setembre', 'octubre', 'novembre', 'desembre'],
+            'en': ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+        }
+        
+        day_name = day_names.get(language, day_names['es'])[today.weekday()]
+        month_name = month_names.get(language, month_names['es'])[today.month - 1]
+        
+        if language == 'en':
+            today_formatted = f"{day_name}, {month_name} {today.day}, {today.year}"
+        else:
+            today_formatted = f"{day_name} {today.day} de {month_name} de {today.year}"
+        
+        today_iso = today.strftime('%Y-%m-%d')
+        
+        logger.info(f"📅 [ELEVEN LABS INIT] Data d'avui: {today_formatted} ({today_iso})")
+        
+        # Retornar variables dinàmiques amb tota la informació
         response_data = {
             'phone': clean_phone or '',
-            'saved_customer': customer_name or 'Cliente Nuevo',
-            'language': language
+            'customer_name': customer_name or '',
+            'is_known_customer': bool(customer_name),
+            'language': language,
+            'today_date': today_iso,
+            'today_formatted': today_formatted,
+            'current_year': today.year
         }
         
         logger.info(f"✅ [ELEVEN LABS INIT] Retornant: {response_data}")
@@ -1869,10 +1904,16 @@ def elevenlabs_init():
     
     except Exception as e:
         logger.exception(f"❌ [ELEVEN LABS INIT] Error: {e}")
+        from datetime import datetime
+        today = datetime.now()
         fallback_data = {
             'phone': '',
-            'saved_customer': 'Cliente',
-            'language': 'es'
+            'customer_name': '',
+            'is_known_customer': False,
+            'language': 'es',
+            'today_date': today.strftime('%Y-%m-%d'),
+            'today_formatted': f"lunes {today.day} de octubre de {today.year}",
+            'current_year': today.year
         }
         logger.info(f"⚠️ [ELEVEN LABS INIT] Retornant fallback: {fallback_data}")
         return jsonify(fallback_data), 500
@@ -1888,8 +1929,8 @@ def elevenlabs_create_appointment():
         logger.info(f"📞 [ELEVEN LABS CREATE] Dades rebudes: {data}")
         logger.info(f"📞 [ELEVEN LABS CREATE] Headers: {dict(request.headers)}")
         
-        # Obtenir dades
-        phone = data.get('customer_phone', '')
+        # Obtenir dades - PHONE ara ve directament del body (paràmetre obligatori de la tool)
+        phone = data.get('phone', '')
         client_name = data.get('client_name')
         date = data.get('date')
         time = data.get('time')
@@ -1901,11 +1942,11 @@ def elevenlabs_create_appointment():
         logger.info(f"📋 [ELEVEN LABS CREATE] Time: {time}")
         logger.info(f"📋 [ELEVEN LABS CREATE] People: {num_people}")
         
-        # Validar
-        if not all([client_name, date, time]):
+        # Validar camps obligatoris (incloent telèfon)
+        if not all([phone, client_name, date, time]):
             return jsonify({
                 'success': False,
-                'message': 'Falta informació. Necessito nom, data i hora.'
+                'message': 'Falta informació. Necessito telèfon, nom, data i hora.'
             }), 400
         
         if num_people < 1 or num_people > 8:
