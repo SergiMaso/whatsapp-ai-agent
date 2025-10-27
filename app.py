@@ -1932,19 +1932,19 @@ def elevenlabs_create_appointment():
         
         # Obtenir dades - PHONE ara ve directament del body (paràmetre obligatori de la tool)
         phone = data.get('phone', '')
-        client_name = data.get('client_name')
+        customer_name = data.get('customer_name')
         date = data.get('date')
         time = data.get('time')
         num_people = data.get('num_people', 2)
 
         logger.info(f"📋 [ELEVEN LABS CREATE] Phone: {phone}")
-        logger.info(f"📋 [ELEVEN LABS CREATE] Name: {client_name}")
+        logger.info(f"📋 [ELEVEN LABS CREATE] Name: {customer_name}")
         logger.info(f"📋 [ELEVEN LABS CREATE] Date: {date}")
         logger.info(f"📋 [ELEVEN LABS CREATE] Time: {time}")
         logger.info(f"📋 [ELEVEN LABS CREATE] People: {num_people}")
         
         # Validar camps obligatoris (incloent telèfon)
-        if not all([phone, client_name, date, time]):
+        if not all([phone, customer_name, date, time]):
             return jsonify({
                 'success': False,
                 'message': 'Falta informació. Necessito telèfon, nom, data i hora.'
@@ -1962,12 +1962,12 @@ def elevenlabs_create_appointment():
         logger.info(f"🧹 [ELEVEN LABS CREATE] Telèfon per guardar a BD: {clean_phone}")
         
         # Guardar info del client
-        appointment_manager.save_customer_info(clean_phone, client_name)
+        appointment_manager.save_customer_info(clean_phone, customer_name)
         
         # Crear reserva
         result = appointment_manager.create_appointment(
             phone=clean_phone,
-            client_name=client_name,
+            client_name=customer_name,
             date=date,
             time=time,
             num_people=num_people,
