@@ -1887,15 +1887,18 @@ def elevenlabs_init():
         
         logger.info(f"📅 [ELEVEN LABS INIT] Data d'avui: {today_formatted} ({today_iso})")
         
-        # Retornar variables dinàmiques amb tota la informació
+        # Format correcte per ElevenLabs Conversation Initiation
         response_data = {
-            'phone': clean_phone or '',
-            'customer_name': customer_name or '',
-            'is_known_customer': bool(customer_name),
-            'language': language,
-            'today_date': today_iso,
-            'today_formatted': today_formatted,
-            'current_year': today.year
+            "type": "conversation_initiation_client_data",
+            "dynamic_variables": {
+                "phone": clean_phone or '',
+                "customer_name": customer_name or 'Cliente',
+                "is_known_customer": bool(customer_name),
+                "language": language,
+                "today_date": today_iso,
+                "today_formatted": today_formatted,
+                "current_year": str(today.year)
+            }
         }
         
         logger.info(f"✅ [ELEVEN LABS INIT] Retornant: {response_data}")
@@ -1908,13 +1911,16 @@ def elevenlabs_init():
         from datetime import datetime
         today = datetime.now()
         fallback_data = {
-            'phone': '',
-            'customer_name': '',
-            'is_known_customer': False,
-            'language': 'es',
-            'today_date': today.strftime('%Y-%m-%d'),
-            'today_formatted': f"lunes {today.day} de octubre de {today.year}",
-            'current_year': today.year
+            "type": "conversation_initiation_client_data",
+            "dynamic_variables": {
+                "phone": '',
+                "customer_name": 'Cliente',
+                "is_known_customer": False,
+                "language": 'es',
+                "today_date": today.strftime('%Y-%m-%d'),
+                "today_formatted": f"lunes {today.day} de octubre de {today.year}",
+                "current_year": str(today.year)
+            }
         }
         logger.info(f"⚠️ [ELEVEN LABS INIT] Retornant fallback: {fallback_data}")
         return jsonify(fallback_data), 500
