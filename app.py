@@ -31,13 +31,47 @@ app = Flask(__name__)
 
 # Configuració de Flask
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SESSION_COOKIE_SECURE'] = True  # Només HTTPS en producció
+# Configuració de cookies per autenticació cross-domain
+IS_PRODUCTION = os.getenv('ENVIRONMENT', 'development') == 'production'
+
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Protecció XSS
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Protecció CSRF
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hores
 
-# Habilitar CORS per al frontend
-CORS(app, supports_credentials=True)
+if IS_PRODUCTION:
+    # Producció: HTTPS obligatori amb SameSite=None per cross-domain
+    app.config['SESSION_COOKIE_SECURE'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+else:
+    # Development: Permetre HTTP amb SameSite=Lax
+    app.config['SESSION_COOKIE_SECURE'] = False
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Habilitar CORS per al frontend amb suport de credentials
+# Suporta múltiples origens: localhost, Vercel, AWS, etc.
+FRONTEND_ORIGIN = os.getenv('FRONTEND_URL', 'http://localhost:8080')
+
+# Llista d'origens permesos
+allowed_origins = [
+    FRONTEND_ORIGIN,
+    'http://localhost:8080',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://frontend-restaurant-ten.vercel.app',  # Vercel production
+]
+
+# Afegir dominis de Vercel adicionals si existeixen
+vercel_url = os.getenv('VERCEL_URL')
+if vercel_url and vercel_url not in allowed_origins:
+    allowed_origins.append(f'https://{vercel_url}')
+
+print(f"✅ CORS origens permesos: {allowed_origins}")
+
+CORS(app, 
+     supports_credentials=True,
+     origins=allowed_origins,
+     allow_headers=['Content-Type', 'Authorization'],
+     expose_headers=['Set-Cookie'],
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
 
 # Inicialitzar Flask-Login
 login_manager.init_app(app)

@@ -16,3 +16,4 @@ cloudinary
 elevenlabs
 gunicorn
 sendgrid
+pyjwt
