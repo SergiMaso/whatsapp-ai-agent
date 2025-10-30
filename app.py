@@ -56,7 +56,7 @@ allowed_origins = [
     'http://localhost:8080',
     'http://localhost:5173',
     'http://localhost:3000',
-    'https://frontend-restaurant-ten.vercel.app',  # Vercel production
+    'https://frontend-restaurant-rho.vercel.app',  # Vercel production
 ]
 
 # Afegir dominis de Vercel adicionals si existeixen
@@ -2258,4 +2258,5 @@ def elevenlabs_cancel_appointment():
 # --------------------------------------------------------------------------
 if __name__ == '__main__':
     logger.info("🚀 Iniciant servidor Flask per Twilio Voice...")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    port = int(os.getenv('PORT', 5001))  # Port 5001 per evitar conflicte amb AirPlay
+    app.run(host='0.0.0.0', port=port, debug=True)
