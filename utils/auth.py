@@ -41,7 +41,17 @@ class User(UserMixin):
         self.email = email
         self.full_name = full_name
         self.role = role
-        self.is_active = is_active
+        self._is_active = is_active  # ← Guardem en variable privada
+    
+    @property
+    def is_active(self):
+        """Getter per is_active"""
+        return self._is_active
+    
+    @is_active.setter
+    def is_active(self, value):
+        """Setter per is_active"""
+        self._is_active = value
     
     def __repr__(self):
         return f'<User {self.email} ({self.role})>'
