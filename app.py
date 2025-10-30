@@ -18,13 +18,33 @@ import logging
 from twilio.twiml.voice_response import VoiceResponse
 import time
 
+# Imports per autenticació
+from flask_login import login_required, current_user
+from utils.auth import login_manager, auth_bp, owner_required, admin_required, read_access
+
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Habilitar CORS per al frontend
+
+# Configuració de Flask
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['SESSION_COOKIE_SECURE'] = True  # Només HTTPS en producció
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Protecció XSS
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Protecció CSRF
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hores
+
+# Habilitar CORS per al frontend
+CORS(app, supports_credentials=True)
+
+# Inicialitzar Flask-Login
+login_manager.init_app(app)
+login_manager.login_view = None  # No redirigir automàticament (API)
+
+# Registrar Blueprint d'autenticació
+app.register_blueprint(auth_bp)
 
 # Configuración de Twilio
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
@@ -143,8 +163,9 @@ def elevenlabs_test():
 # ========================================
 
 @app.route('/api/appointments', methods=['GET'])
+@read_access
 def get_appointments():
-    """Obtenir totes les reserves"""
+    """Obtenir totes les reserves (requere login)"""
     try:
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
@@ -195,8 +216,9 @@ def get_appointments():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/appointments/<int:appointment_id>', methods=['GET'])
+@read_access
 def get_appointment(appointment_id):
-    """Obtenir una reserva específica"""
+    """Obtenir una reserva específica (requere login)"""
     try:
         conn = appointment_manager.get_connection()
         cursor = conn.cursor()
@@ -236,8 +258,9 @@ def get_appointment(appointment_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/appointments', methods=['POST'])
+@admin_required
 def create_appointment_api():
-    """Crear nova reserva des del frontend"""
+    """Crear nova reserva des del frontend (requere Owner/Admin)"""
     try:
         data = request.json
         
@@ -271,8 +294,9 @@ def create_appointment_api():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/appointments/<int:appointment_id>', methods=['PUT'])
+@admin_required
 def update_appointment_api(appointment_id):
-    """Actualitzar una reserva"""
+    """Actualitzar una reserva (requere Owner/Admin)"""
     try:
         data = request.json
         
@@ -313,8 +337,9 @@ def update_appointment_api(appointment_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/appointments/<int:appointment_id>', methods=['DELETE'])
+@admin_required
 def delete_appointment_api(appointment_id):
-    """Cancel·lar una reserva"""
+    """Cancel·lar una reserva (requere Owner/Admin)"""
     try:
         # Obtenir phone de la reserva
         conn = appointment_manager.get_connection()

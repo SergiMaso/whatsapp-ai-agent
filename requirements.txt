@@ -1,6 +1,7 @@
 # Backend dependencies
 flask
 flask-cors
+flask-login
 twilio
 python-dotenv
 psycopg2-binary
@@ -14,3 +15,4 @@ pytz
 cloudinary
 elevenlabs
 gunicorn
+sendgrid
