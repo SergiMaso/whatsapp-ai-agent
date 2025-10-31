@@ -427,7 +427,8 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 # IMPORTANT: Guardar nom del client
                 appointment_manager.save_customer_info(phone, function_args.get('client_name'))
                 
-                result = appointment_manager.create_appointment(
+                # NOVA CRIDA AMB VALIDACIONS I ALTERNATIVES
+                result = appointment_manager.create_appointment_with_alternatives(
                     phone=phone,
                     client_name=function_args.get('client_name'),
                     date=function_args.get('date'),
@@ -436,10 +437,12 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     duration_hours=1
                 )
                 
-                if result:
-                    table_info = result['table']
+                if result['success']:
+                    # Reserva creada correctament
+                    appointment_data = result['appointment']
+                    table_info = appointment_data['table']
                     
-                    # Missatges segons idioma amb pregunta NOMÉS per observacions
+                    # Missatges segons idioma
                     if language == 'ca':
                         confirmation = f"✅ Reserva confirmada!\n\n👤 Nom: {function_args['client_name']}\n👥 Persones: {num_people}\n📅 Data: {function_args['date']}\n🕐 Hora: {function_args['time']}\n🪑 Taula: {table_info['number']} (capacitat {table_info['capacity']})\n\nT'esperem!\n\n📝 Tens alguna observació especial? (trona, al·lèrgies, preferències...)"
                     elif language == 'en':
@@ -450,15 +453,28 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     assistant_reply = confirmation
                     
                     # Guardar estat esperant observacions
-                    conversation_manager.save_message(phone, "system", f"WAITING_NOTES:{result['id']}")
-                    print(f"📌 Estat guardat: WAITING_NOTES:{result['id']}")
+                    conversation_manager.save_message(phone, "system", f"WAITING_NOTES:{appointment_data['id']}")
+                    print(f"📌 Estat guardat: WAITING_NOTES:{appointment_data['id']}")
+                
+                elif 'alternative' in result:
+                    # Hi ha una alternativa disponible
+                    alt = result['alternative']
+                    
+                    if language == 'ca':
+                        assistant_reply = f"⚠️ Ho sento, l'hora {function_args['time']} del {function_args['date']} no està disponible.\n\n✅ Però tinc disponible:\n📅 {alt['date']}\n🕐 {alt['time']}\n\nT'interessa aquesta hora? Si vols una altra, digues-m'ho!"
+                    elif language == 'en':
+                        assistant_reply = f"⚠️ Sorry, {function_args['time']} on {function_args['date']} is not available.\n\n✅ But I have available:\n📅 {alt['date']}\n🕐 {alt['time']}\n\nWould you like this time? If you prefer another, let me know!"
+                    else:
+                        assistant_reply = f"⚠️ Lo siento, la hora {function_args['time']} del {function_args['date']} no está disponible.\n\n✅ Pero tengo disponible:\n📅 {alt['date']}\n🕐 {alt['time']}\n\n¿Te interesa esta hora? Si quieres otra, dímelo!"
+                
                 else:
-                    no_tables_msgs = {
-                        'es': f"Lo siento, no hay mesas disponibles para {num_people} personas el {function_args['date']} a las {function_args['time']}. ¿Prefieres otro horario?",
-                        'ca': f"Ho sento, no hi ha taules disponibles per a {num_people} persones el {function_args['date']} a les {function_args['time']}. Prefereixes un altre horari?",
-                        'en': f"Sorry, no tables available for {num_people} people on {function_args['date']} at {function_args['time']}. Would you like another time?"
-                    }
-                    assistant_reply = no_tables_msgs.get(language, no_tables_msgs['es'])
+                    # No hi ha disponibilitat
+                    if language == 'ca':
+                        assistant_reply = f"😔 Ho sento molt, no tinc disponibilitat per {num_people} persones en els propers dies.\n\n📞 Et recomano que ens truquis directament per buscar alternatives: [número de telèfon]"
+                    elif language == 'en':
+                        assistant_reply = f"😔 I'm very sorry, I don't have availability for {num_people} people in the coming days.\n\n📞 I recommend calling us directly to find alternatives: [phone number]"
+                    else:
+                        assistant_reply = f"😔 Lo siento mucho, no tengo disponibilidad para {num_people} personas en los próximos días.\n\n📞 Te recomiendo que nos llames directamente para buscar alternativas: [número de teléfono]"
             
             elif function_name == "update_appointment":
                 apt_id = function_args.get('appointment_id')

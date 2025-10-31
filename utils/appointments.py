@@ -414,6 +414,250 @@ class AppointmentManager:
             traceback.print_exc()
             return None
     
+
+
+    def find_next_available_slot(self, requested_date, requested_time, num_people, max_days_ahead=7):
+        """
+        Buscar el proper slot disponible a partir d'una data/hora donada
+        
+        Estratègia:
+        1. Comprovar si la data/hora sol·licitada és vàlida i en el futur
+        2. Comprovar si el restaurant està obert en aquella hora
+        3. Buscar taules disponibles en aquella hora
+        4. Si no n'hi ha, buscar la següent hora disponible el MATEIX DIA
+        5. Si no hi ha cap hora disponible aquell dia, buscar en dies següents
+        
+        Retorna:
+        {
+            'date': 'YYYY-MM-DD',
+            'time': 'HH:MM',
+            'is_requested': True/False,  # True si és la hora sol·licitada, False si és alternativa
+            'reason': 'Motiu si no és disponible'
+        }
+        o None si no hi ha disponibilitat
+        """
+        try:
+            barcelona_tz = pytz.timezone('Europe/Madrid')
+            now = datetime.now(barcelona_tz)
+            
+            # Parsejar data/hora sol·licitada
+            requested_datetime_naive = datetime.strptime(f"{requested_date} {requested_time}", "%Y-%m-%d %H:%M")
+            requested_datetime = barcelona_tz.localize(requested_datetime_naive)
+            
+            print(f"🔍 [FIND SLOT] Buscant disponibilitat per {num_people} persones")
+            print(f"🔍 [FIND SLOT] Data sol·licitada: {requested_datetime}")
+            print(f"🔍 [FIND SLOT] Ara mateix: {now}")
+            
+            # VALIDACIÓ 1: Comprovar si és en el passat
+            if requested_datetime <= now:
+                print(f"❌ [FIND SLOT] La data/hora sol·licitada és en el passat!")
+                # Buscar el proper slot disponible des d'ara mateix
+                requested_datetime = now + timedelta(minutes=30)  # Afegir 30 min de marge
+                requested_date = requested_datetime.strftime("%Y-%m-%d")
+                requested_time = requested_datetime.strftime("%H:%M")
+                print(f"🔄 [FIND SLOT] Ajustant a: {requested_datetime}")
+            
+            # Buscar en el dia sol·licitat primer
+            slot = self._find_slot_on_date(requested_date, requested_time, num_people, now)
+            if slot:
+                return slot
+            
+            # Si no hi ha disponibilitat aquell dia, buscar en els propers dies
+            print(f"🔍 [FIND SLOT] No hi ha disponibilitat el {requested_date}, buscant en dies següents...")
+            
+            for days_ahead in range(1, max_days_ahead + 1):
+                next_date = (datetime.strptime(requested_date, "%Y-%m-%d") + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+                
+                # Buscar a partir de la mateixa hora sol·licitada
+                slot = self._find_slot_on_date(next_date, requested_time, num_people, now)
+                if slot:
+                    return slot
+            
+            print(f"❌ [FIND SLOT] No s'ha trobat cap disponibilitat en els propers {max_days_ahead} dies")
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error buscant slot disponible: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _find_slot_on_date(self, date, start_time, num_people, now):
+        """
+        Buscar un slot disponible en una data específica
+        Prova primer l'hora sol·licitada, després busca altres hores disponibles
+        
+        Retorna el primer slot disponible o None
+        """
+        try:
+            barcelona_tz = pytz.timezone('Europe/Madrid')
+            
+            print(f"🔍 [SLOT] Buscant en data: {date} a partir de {start_time}")
+            
+            # Obtenir horaris d'obertura
+            hours = self.get_opening_hours(date)
+            
+            # VALIDACIÓ 2: Comprovar si el restaurant està tancat
+            if hours['status'] == 'closed':
+                print(f"❌ [SLOT] Restaurant tancat el {date}")
+                return None
+            
+            # Obtenir intervals d'horari (dinar i/o sopar)
+            time_slots = []
+            
+            if hours['status'] in ['full_day', 'lunch_only'] and hours['lunch_start'] and hours['lunch_end']:
+                time_slots.append({
+                    'start': hours['lunch_start'],
+                    'end': hours['lunch_end'],
+                    'name': 'lunch'
+                })
+            
+            if hours['status'] in ['full_day', 'dinner_only'] and hours['dinner_start'] and hours['dinner_end']:
+                time_slots.append({
+                    'start': hours['dinner_start'],
+                    'end': hours['dinner_end'],
+                    'name': 'dinner'
+                })
+            
+            if not time_slots:
+                print(f"❌ [SLOT] No hi ha horaris definits per {date}")
+                return None
+            
+            print(f"🕐 [SLOT] Intervals disponibles: {time_slots}")
+            
+            # Convertir hora sol·licitada a minuts
+            start_time_parts = start_time.split(':')
+            requested_minutes = int(start_time_parts[0]) * 60 + int(start_time_parts[1])
+            
+            # Per cada interval d'horari
+            for slot in time_slots:
+                slot_start_parts = slot['start'].split(':')
+                slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                
+                slot_end_parts = slot['end'].split(':')
+                slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+                
+                # Generar possibles hores cada 30 minuts dins de l'interval
+                # Començar des de l'hora sol·licitada o l'inici de l'interval
+                start_checking_from = max(requested_minutes, slot_start_minutes)
+                
+                # Arrodonir a la propera mitja hora
+                if start_checking_from % 30 != 0:
+                    start_checking_from = ((start_checking_from // 30) + 1) * 30
+                
+                # Iterar cada 30 minuts
+                for check_minutes in range(start_checking_from, slot_end_minutes - 60, 30):  # -60 per deixar 1h mín
+                    check_hour = check_minutes // 60
+                    check_minute = check_minutes % 60
+                    check_time = f"{check_hour:02d}:{check_minute:02d}"
+                    
+                    # Crear datetime per aquesta hora
+                    check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
+                    check_datetime = barcelona_tz.localize(check_datetime_naive)
+                    
+                    # VALIDACIÓ 3: Assegurar que no sigui en el passat
+                    if check_datetime <= now:
+                        print(f"⏭️  [SLOT] {check_time} és en el passat, saltant...")
+                        continue
+                    
+                    # VALIDACIÓ 4: Comprovar disponibilitat de taules
+                    end_datetime = check_datetime + timedelta(hours=1)
+                    tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
+                    
+                    if tables_result:
+                        is_requested = (check_time == start_time)
+                        print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
+                        
+                        return {
+                            'date': date,
+                            'time': check_time,
+                            'is_requested': is_requested,
+                            'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
+                        }
+                    else:
+                        print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
+            
+            print(f"❌ [SLOT] No s'ha trobat cap hora disponible el {date}")
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error buscant slot en data: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def create_appointment_with_alternatives(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
+        """
+        Crear una reserva amb validacions i propostes d'alternatives si no hi ha disponibilitat
+        
+        Retorna:
+        - Si hi ha disponibilitat: {'success': True, 'appointment': {...}, 'is_requested_time': True/False}
+        - Si no hi ha disponibilitat: {'success': False, 'alternatives': [...], 'reason': '...'}
+        """
+        try:
+            print(f"📞 [CREATE] Sol·licitud de reserva: {date} {time} per {num_people} persones")
+            
+            # Buscar el millor slot disponible
+            slot = self.find_next_available_slot(date, time, num_people)
+            
+            if not slot:
+                print(f"❌ [CREATE] No hi ha disponibilitat en els propers 7 dies")
+                return {
+                    'success': False,
+                    'reason': 'No hi ha disponibilitat en els propers 7 dies',
+                    'alternatives': []
+                }
+            
+            # Si el slot trobat NO és l'hora sol·licitada, retornar com a alternativa
+            if not slot['is_requested']:
+                print(f"⚠️  [CREATE] Hora sol·licitada no disponible. Proposant alternativa: {slot['date']} {slot['time']}")
+                return {
+                    'success': False,
+                    'reason': slot['reason'],
+                    'alternative': {
+                        'date': slot['date'],
+                        'time': slot['time']
+                    }
+                }
+            
+            # Si el slot trobat ÉS l'hora sol·licitada, crear la reserva
+            print(f"✅ [CREATE] Hora sol·licitada disponible! Creant reserva...")
+            
+            result = self.create_appointment(
+                phone=phone,
+                client_name=client_name,
+                date=slot['date'],
+                time=slot['time'],
+                num_people=num_people,
+                duration_hours=duration_hours,
+                notes=notes
+            )
+            
+            if result:
+                return {
+                    'success': True,
+                    'appointment': result,
+                    'is_requested_time': True
+                }
+            else:
+                print(f"❌ [CREATE] Error crític: find_next_available_slot va dir que hi havia taules però create_appointment ha fallat")
+                return {
+                    'success': False,
+                    'reason': 'Error intern creant la reserva',
+                    'alternatives': []
+                }
+            
+        except Exception as e:
+            print(f"❌ Error en create_appointment_with_alternatives: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'reason': 'Error del sistema',
+                'alternatives': []
+            }
+
+
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
             # Crear timezone de Barcelona
