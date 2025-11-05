@@ -50,7 +50,7 @@ else:
 # Suporta múltiples origens: localhost, Vercel, AWS, etc.
 FRONTEND_ORIGIN = os.getenv('FRONTEND_URL', 'http://localhost:8080')
 
-# Llista d'origens permesos
+# Llista d'origens permesos (base)
 allowed_origins = [
     FRONTEND_ORIGIN,
     'http://localhost:8080',
@@ -64,11 +64,30 @@ vercel_url = os.getenv('VERCEL_URL')
 if vercel_url and vercel_url not in allowed_origins:
     allowed_origins.append(f'https://{vercel_url}')
 
-print(f"✅ CORS origens permesos: {allowed_origins}")
+print(f"✅ CORS origens permesos (base): {allowed_origins}")
+
+# Funció per validar origens de Vercel dinàmicament
+def is_vercel_origin(origin):
+    """Comprova si l'origen és un deployment de Vercel"""
+    if not origin:
+        return False
+    # Acceptar qualsevol subdomain de vercel.app
+    return origin.startswith('https://') and '.vercel.app' in origin
+
+# Handler dinàmic per CORS que accepta tots els deployments de Vercel
+def cors_origin_handler(origin, *args, **kwargs):
+    """Handler dinàmic per CORS que accepta tots els deployments de Vercel"""
+    if origin in allowed_origins:
+        return True
+    if is_vercel_origin(origin):
+        print(f"✅ CORS: Acceptant origen de Vercel: {origin}")
+        return True
+    print(f"❌ CORS: Origen rebutjat: {origin}")
+    return False
 
 CORS(app, 
      supports_credentials=True,
-     origins=allowed_origins,
+     origins=cors_origin_handler,  # Usar funció dinàmica
      allow_headers=['Content-Type', 'Authorization'],
      expose_headers=['Set-Cookie'],
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
