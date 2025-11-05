@@ -776,6 +776,7 @@ class AppointmentManager:
                 'message': 'Missatge descriptiu'
             }
         """
+        conn = None
         try:
             now = datetime.now(self.BARCELONA_TZ)
             print(f"🔍 [CHECK OPTIMIZED] Consultant disponibilitat per {date} - {num_people} persones")
@@ -834,7 +835,6 @@ class AppointmentManager:
             all_tables = cursor.fetchall()
 
             cursor.close()
-            self.return_connection(conn)
 
             print(f"📊 [CHECK] Carregades {len(daily_appointments)} reserves i {len(all_tables)} taules")
 
@@ -903,6 +903,10 @@ class AppointmentManager:
                 'slots': [],
                 'message': 'Error consultant disponibilitat'
             }
+        finally:
+            # ⚡ CRÍTIC: Sempre retornar connexió al pool
+            if conn:
+                self.return_connection(conn)
 
 
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
@@ -1693,6 +1697,7 @@ class ConversationManager:
         Eliminar missatges de més de 15 dies de TOTS els usuaris
         NOTA: Aquesta funció només s'hauria de cridar des del scheduler, NO a cada save!
         """
+        conn = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -1708,77 +1713,92 @@ class ConversationManager:
 
             conn.commit()
             cursor.close()
-            self.return_connection(conn)
         except Exception as e:
             print(f"❌ Error limpiando mensajes antiguos: {e}")
+        finally:
+            if conn:
+                self.return_connection(conn)
 
     def save_message(self, phone, role, content):
         """
         Guardar un missatge a l'historial
         OPTIMITZAT: NO crida clean_old_messages (es fa via scheduler)
         """
+        conn = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("INSERT INTO conversations (phone, role, content) VALUES (%s, %s, %s)", (phone, role, content))
             conn.commit()
             cursor.close()
-            self.return_connection(conn)
         except Exception as e:
             print(f"❌ Error guardando mensaje: {e}")
-    
+        finally:
+            if conn:
+                self.return_connection(conn)
+
     def get_history(self, phone, limit=10):
         """Obtenir historial de conversa NOMÉS dels últims 10 minuts"""
+        conn = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                SELECT role, content 
-                FROM conversations 
-                WHERE phone = %s 
+                SELECT role, content
+                FROM conversations
+                WHERE phone = %s
                   AND created_at > NOW() - INTERVAL '10 minutes'
-                ORDER BY created_at DESC 
+                ORDER BY created_at DESC
                 LIMIT %s
             """, (phone, limit))
-            
+
             messages = cursor.fetchall()
             cursor.close()
-            conn.close()
             return [{"role": role, "content": content} for role, content in reversed(messages)]
         except Exception as e:
             print(f"❌ Error obteniendo historial: {e}")
             return []
-    
+        finally:
+            # ⚡ CRÍTIC: RETORNAR al pool, NO tancar!
+            if conn:
+                self.return_connection(conn)
+
     def clear_history(self, phone):
+        conn = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("DELETE FROM conversations WHERE phone = %s", (phone,))
             conn.commit()
             cursor.close()
-            conn.close()
         except Exception as e:
             print(f"❌ Error limpiando historial: {e}")
-    
+        finally:
+            if conn:
+                self.return_connection(conn)
+
     def get_message_count(self, phone):
         """Comptar missatges dels últims 10 minuts"""
+        conn = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                SELECT COUNT(*) 
-                FROM conversations 
-                WHERE phone = %s 
+                SELECT COUNT(*)
+                FROM conversations
+                WHERE phone = %s
                   AND role = 'user'
                   AND created_at > NOW() - INTERVAL '10 minutes'
             """, (phone,))
-            
+
             count = cursor.fetchone()[0]
             cursor.close()
-            conn.close()
             return count
         except Exception as e:
             print(f"❌ Error contando mensajes: {e}")
             return 0
+        finally:
+            if conn:
+                self.return_connection(conn)
