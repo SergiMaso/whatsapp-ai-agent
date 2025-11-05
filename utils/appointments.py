@@ -1,6 +1,7 @@
 import psycopg2
 from psycopg2 import pool
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 import os
 from dotenv import load_dotenv
 import pytz  # IMPORTANT: Per gestionar timezones
@@ -50,7 +51,26 @@ class AppointmentManager:
         """Retornar connexió al pool"""
         if conn:
             AppointmentManager._connection_pool.putconn(conn)
-    
+
+    @contextmanager
+    def get_db_connection(self):
+        """
+        Context manager per gestionar connexions automàticament
+
+        Ús:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT ...")
+                # Connexió es retorna automàticament al sortir del with
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            yield conn
+        finally:
+            if conn:
+                self.return_connection(conn)
+
     def ensure_tables_exist(self):
         """
         Crear totes les taules necessàries si no existeixen
@@ -298,49 +318,49 @@ class AppointmentManager:
     
     def find_combined_tables(self, start_time, end_time, num_people, exclude_appointment_id=None):
         """
-        Buscar taules individuals o combinades per una reserva
+        ⚡ OPTIMITZAT: Buscar taules amb context manager (connexió sempre es retorna al pool)
         Retorna: {'tables': [taula1, taula2, ...], 'total_capacity': X}
         """
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Obtenir taules ocupades en aquest horari
-            if exclude_appointment_id:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+
+                # Obtenir taules ocupades en aquest horari
+                if exclude_appointment_id:
+                    cursor.execute("""
+                        SELECT table_id FROM appointments
+                        WHERE status = 'confirmed' AND id != %s
+                          AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
+                    """, (exclude_appointment_id, end_time, start_time, start_time, end_time))
+                else:
+                    cursor.execute("""
+                        SELECT table_id FROM appointments
+                        WHERE status = 'confirmed'
+                          AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
+                    """, (end_time, start_time, start_time, end_time))
+
+                occupied_ids = [row[0] for row in cursor.fetchall()]
+
+                # Obtenir taules SENSE PAIRING
                 cursor.execute("""
-                    SELECT table_id FROM appointments 
-                    WHERE status = 'confirmed' AND id != %s
-                      AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
-                """, (exclude_appointment_id, end_time, start_time, start_time, end_time))
-            else:
+                    SELECT id, table_number, capacity, pairing FROM tables
+                    WHERE status = 'available' AND id NOT IN %s AND pairing IS NULL
+                    ORDER BY capacity ASC, table_number
+                """, (tuple(occupied_ids) if occupied_ids else (0,),))
+
+                tables_no_pairing = cursor.fetchall()
+
+                # Obtenir taules AMB PAIRING
                 cursor.execute("""
-                    SELECT table_id FROM appointments 
-                    WHERE status = 'confirmed'
-                      AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
-                """, (end_time, start_time, start_time, end_time))
-            
-            occupied_ids = [row[0] for row in cursor.fetchall()]
-            
-            # Obtenir taules SENSE PAIRING
-            cursor.execute("""
-                SELECT id, table_number, capacity, pairing FROM tables 
-                WHERE status = 'available' AND id NOT IN %s AND pairing IS NULL
-                ORDER BY capacity ASC, table_number
-            """, (tuple(occupied_ids) if occupied_ids else (0,),))
-            
-            tables_no_pairing = cursor.fetchall()
-            
-            # Obtenir taules AMB PAIRING
-            cursor.execute("""
-                SELECT id, table_number, capacity, pairing FROM tables 
-                WHERE status = 'available' AND id NOT IN %s AND pairing IS NOT NULL
-                ORDER BY capacity ASC, table_number
-            """, (tuple(occupied_ids) if occupied_ids else (0,),))
-            
-            tables_with_pairing = cursor.fetchall()
-            
-            cursor.close()
-            conn.close()
+                    SELECT id, table_number, capacity, pairing FROM tables
+                    WHERE status = 'available' AND id NOT IN %s AND pairing IS NOT NULL
+                    ORDER BY capacity ASC, table_number
+                """, (tuple(occupied_ids) if occupied_ids else (0,),))
+
+                tables_with_pairing = cursor.fetchall()
+
+                cursor.close()
+                # ⚡ Connexió es retorna automàticament al sortir del 'with'
             
             # 1. PRIORITAT MÀXIMA: Taula SENSE PAIRING amb capacitat EXACTA
             for table in tables_no_pairing:
@@ -1269,68 +1289,66 @@ class AppointmentManager:
     
     def get_opening_hours(self, date):
         """
-        Obtenir els horaris d'obertura per una data específica
+        ⚡ OPTIMITZAT: Obtenir horaris amb context manager
         Si no existeix a opening_hours, retorna els defaults de weekly_defaults
         """
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom
-                FROM opening_hours
-                WHERE date = %s
-            """, (date,))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                cursor.close()
-                conn.close()
-                return {
-                    'status': result[0],
-                    'lunch_start': str(result[1]) if result[1] else None,
-                    'lunch_end': str(result[2]) if result[2] else None,
-                    'dinner_start': str(result[3]) if result[3] else None,
-                    'dinner_end': str(result[4]) if result[4] else None,
-                    'notes': result[5],
-                    'is_custom': result[6]
-                }
-            else:
-                # No existeix: buscar a weekly_defaults
-                date_obj = datetime.strptime(date, '%Y-%m-%d').date() if isinstance(date, str) else date
-                day_of_week = date_obj.weekday()
-                
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+
                 cursor.execute("""
-                    SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
-                    FROM weekly_defaults
-                    WHERE day_of_week = %s
-                """, (day_of_week,))
-                
-                default = cursor.fetchone()
-                cursor.close()
-                conn.close()
-                
-                if default:
+                    SELECT status, lunch_start, lunch_end, dinner_start, dinner_end, notes, is_custom
+                    FROM opening_hours
+                    WHERE date = %s
+                """, (date,))
+
+                result = cursor.fetchone()
+
+                if result:
+                    cursor.close()
                     return {
-                        'status': default[0],
-                        'lunch_start': str(default[1]) if default[1] else None,
-                        'lunch_end': str(default[2]) if default[2] else None,
-                        'dinner_start': str(default[3]) if default[3] else None,
-                        'dinner_end': str(default[4]) if default[4] else None,
-                        'notes': None,
-                        'is_custom': False
+                        'status': result[0],
+                        'lunch_start': str(result[1]) if result[1] else None,
+                        'lunch_end': str(result[2]) if result[2] else None,
+                        'dinner_start': str(result[3]) if result[3] else None,
+                        'dinner_end': str(result[4]) if result[4] else None,
+                        'notes': result[5],
+                        'is_custom': result[6]
                     }
                 else:
-                    return {
-                        'status': 'full_day',
-                        'lunch_start': '12:00',
-                        'lunch_end': '15:00',
-                        'dinner_start': '19:00',
-                        'dinner_end': '22:30',
-                        'notes': None,
-                        'is_custom': False
-                    }
+                    # No existeix: buscar a weekly_defaults
+                    date_obj = datetime.strptime(date, '%Y-%m-%d').date() if isinstance(date, str) else date
+                    day_of_week = date_obj.weekday()
+
+                    cursor.execute("""
+                        SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
+                        FROM weekly_defaults
+                        WHERE day_of_week = %s
+                    """, (day_of_week,))
+
+                    default = cursor.fetchone()
+                    cursor.close()
+
+                    if default:
+                        return {
+                            'status': default[0],
+                            'lunch_start': str(default[1]) if default[1] else None,
+                            'lunch_end': str(default[2]) if default[2] else None,
+                            'dinner_start': str(default[3]) if default[3] else None,
+                            'dinner_end': str(default[4]) if default[4] else None,
+                            'notes': None,
+                            'is_custom': False
+                        }
+                    else:
+                        return {
+                            'status': 'full_day',
+                            'lunch_start': '12:00',
+                            'lunch_end': '15:00',
+                            'dinner_start': '19:00',
+                            'dinner_end': '22:30',
+                            'notes': None,
+                            'is_custom': False
+                        }
         except Exception as e:
             print(f"❌ Error obteniendo horarios: {e}")
             return {
