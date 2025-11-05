@@ -14,6 +14,7 @@ import sys
 from app import app
 from telegram_bot import main as telegram_main
 from utils.weekly_defaults import WeeklyDefaultsManager
+from utils.appointments import ConversationManager
 from utils.scheduler import start_scheduler, stop_scheduler
 
 # Variable global pel scheduler
@@ -55,7 +56,8 @@ if __name__ == '__main__':
     # Inicialitzar i iniciar scheduler
     try:
         weekly_defaults_manager = WeeklyDefaultsManager()
-        scheduler = start_scheduler(weekly_defaults_manager)
+        conversation_manager = ConversationManager()
+        scheduler = start_scheduler(weekly_defaults_manager, conversation_manager)
     except Exception as e:
         print(f"⚠️  No s'ha pogut iniciar el scheduler: {e}")
         print("   El sistema seguirà funcionant sense tasques automàtiques")

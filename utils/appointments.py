@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import pool
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
@@ -9,24 +10,46 @@ load_dotenv()
 class AppointmentManager:
     """
     Gestor de reserves del restaurant
-    
+
     Responsabilitats:
     - Crear/actualitzar/cancel·lar reserves
     - Trobar taules disponibles
     - Gestionar informació de clients
+
+    Optimitzacions:
+    - Connection Pooling per reutilitzar connexions
+    - Timezone com a constant de classe
     """
-    
+
+    # CONSTANTS DE CLASSE
+    BARCELONA_TZ = pytz.timezone('Europe/Madrid')
+    _connection_pool = None
+
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
+
+        # Inicialitzar connection pool (singleton)
+        if AppointmentManager._connection_pool is None:
+            AppointmentManager._connection_pool = pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=20,
+                dsn=self.database_url
+            )
+
         self.ensure_tables_exist()
-    
+
     def get_connection(self):
-        """Crear connexió a PostgreSQL amb timezone correcte"""
-        conn = psycopg2.connect(self.database_url)
+        """Obtenir connexió del pool amb timezone correcte"""
+        conn = AppointmentManager._connection_pool.getconn()
         cursor = conn.cursor()
         cursor.execute("SET timezone TO 'Europe/Madrid'")
         cursor.close()
         return conn
+
+    def return_connection(self, conn):
+        """Retornar connexió al pool"""
+        if conn:
+            AppointmentManager._connection_pool.putconn(conn)
     
     def ensure_tables_exist(self):
         """
@@ -419,14 +442,14 @@ class AppointmentManager:
     def find_next_available_slot(self, requested_date, requested_time, num_people, max_days_ahead=7):
         """
         Buscar el proper slot disponible a partir d'una data/hora donada
-        
+
         Estratègia:
         1. Comprovar si la data/hora sol·licitada és vàlida i en el futur
         2. Comprovar si el restaurant està obert en aquella hora
         3. Buscar taules disponibles en aquella hora
         4. Si no n'hi ha, buscar la següent hora disponible el MATEIX DIA
         5. Si no hi ha cap hora disponible aquell dia, buscar en dies següents
-        
+
         Retorna:
         {
             'date': 'YYYY-MM-DD',
@@ -437,12 +460,11 @@ class AppointmentManager:
         o None si no hi ha disponibilitat
         """
         try:
-            barcelona_tz = pytz.timezone('Europe/Madrid')
-            now = datetime.now(barcelona_tz)
+            now = datetime.now(self.BARCELONA_TZ)
             
             # Parsejar data/hora sol·licitada
             requested_datetime_naive = datetime.strptime(f"{requested_date} {requested_time}", "%Y-%m-%d %H:%M")
-            requested_datetime = barcelona_tz.localize(requested_datetime_naive)
+            requested_datetime = self.BARCELONA_TZ.localize(requested_datetime_naive)
             
             print(f"🔍 [FIND SLOT] Buscant disponibilitat per {num_people} persones")
             print(f"🔍 [FIND SLOT] Data sol·licitada: {requested_datetime}")
@@ -486,11 +508,10 @@ class AppointmentManager:
         """
         Buscar un slot disponible en una data específica
         Prova primer l'hora sol·licitada, després busca altres hores disponibles
-        
+
         Retorna el primer slot disponible o None
         """
         try:
-            barcelona_tz = pytz.timezone('Europe/Madrid')
             
             print(f"🔍 [SLOT] Buscant en data: {date} a partir de {start_time}")
             
@@ -540,20 +561,20 @@ class AppointmentManager:
                 # Generar possibles hores cada 30 minuts dins de l'interval
                 # Començar des de l'hora sol·licitada o l'inici de l'interval
                 start_checking_from = max(requested_minutes, slot_start_minutes)
-                
+
                 # Arrodonir a la propera mitja hora
                 if start_checking_from % 30 != 0:
                     start_checking_from = ((start_checking_from // 30) + 1) * 30
-                
+
                 # Iterar cada 30 minuts
                 for check_minutes in range(start_checking_from, slot_end_minutes - 60, 30):  # -60 per deixar 1h mín
                     check_hour = check_minutes // 60
                     check_minute = check_minutes % 60
                     check_time = f"{check_hour:02d}:{check_minute:02d}"
-                    
+
                     # Crear datetime per aquesta hora
                     check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
-                    check_datetime = barcelona_tz.localize(check_datetime_naive)
+                    check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
                     
                     # VALIDACIÓ 3: Assegurar que no sigui en el passat
                     if check_datetime <= now:
@@ -657,9 +678,90 @@ class AppointmentManager:
                 'alternatives': []
             }
 
+    def _find_tables_in_memory(self, all_tables, occupied_ids, num_people):
+        """
+        ⚡ OPTIMITZAT: Buscar taules disponibles EN MEMÒRIA (sense queries)
+        Replica la lògica de find_combined_tables però treballa amb dades ja carregades
+
+        Args:
+            all_tables: Llista de tuples (id, table_number, capacity, pairing, status)
+            occupied_ids: Set d'IDs de taules ocupades
+            num_people: Nombre de persones
+
+        Returns:
+            {'tables': [...], 'total_capacity': X} o None
+        """
+        # Filtrar taules disponibles (no ocupades i status='available')
+        available_tables = [t for t in all_tables if t[0] not in occupied_ids and t[4] == 'available']
+
+        # Separar taules sense i amb pairing
+        tables_no_pairing = [t for t in available_tables if t[3] is None]
+        tables_with_pairing = [t for t in available_tables if t[3] is not None]
+
+        # 1. PRIORITAT MÀXIMA: Taula SENSE PAIRING amb capacitat EXACTA
+        for table in tables_no_pairing:
+            if table[2] == num_people:
+                return {
+                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
+                    'total_capacity': table[2]
+                }
+
+        # 2. Taula SENSE PAIRING amb capacitat mínima suficient
+        for table in tables_no_pairing:
+            if table[2] >= num_people:
+                return {
+                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
+                    'total_capacity': table[2]
+                }
+
+        # 3. Taula AMB PAIRING amb capacitat EXACTA
+        for table in tables_with_pairing:
+            if table[2] == num_people:
+                return {
+                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
+                    'total_capacity': table[2]
+                }
+
+        # 4. Taula AMB PAIRING amb capacitat mínima suficient
+        for table in tables_with_pairing:
+            if table[2] >= num_people:
+                return {
+                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
+                    'total_capacity': table[2]
+                }
+
+        # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
+        for table in available_tables:
+            table_id, table_num, capacity, pairing, status = table
+
+            if not pairing:
+                continue
+
+            paired_tables = []
+            total_cap = capacity
+
+            for paired_num in pairing:
+                paired_table = next((t for t in available_tables if t[1] == paired_num), None)
+
+                if paired_table:
+                    paired_tables.append({
+                        'id': paired_table[0],
+                        'number': paired_table[1],
+                        'capacity': paired_table[2]
+                    })
+                    total_cap += paired_table[2]
+
+                    if total_cap >= num_people:
+                        return {
+                            'tables': [{'id': table_id, 'number': table_num, 'capacity': capacity}] + paired_tables,
+                            'total_capacity': total_cap
+                        }
+
+        return None
+
     def check_availability(self, date, num_people, preferred_time=None):
         """
-        Consultar disponibilitat per una data i nombre de persones
+        ⚡ OPTIMITZAT: Consultar disponibilitat amb BATCH QUERIES (2 queries en lloc de 39)
         Retorna una llista de slots disponibles (sense crear cap reserva)
 
         Args:
@@ -675,10 +777,8 @@ class AppointmentManager:
             }
         """
         try:
-            barcelona_tz = pytz.timezone('Europe/Madrid')
-            now = datetime.now(barcelona_tz)
-
-            print(f"🔍 [CHECK] Consultant disponibilitat per {date} - {num_people} persones")
+            now = datetime.now(self.BARCELONA_TZ)
+            print(f"🔍 [CHECK OPTIMIZED] Consultant disponibilitat per {date} - {num_people} persones")
 
             # Obtenir horaris d'obertura
             hours = self.get_opening_hours(date)
@@ -714,6 +814,30 @@ class AppointmentManager:
                     'message': f'No hi ha horaris definits per {date}'
                 }
 
+            # ⚡ OPTIMITZACIÓ: Query única per obtenir TOTES les reserves del dia
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT table_id, start_time, end_time
+                FROM appointments
+                WHERE date = %s AND status = 'confirmed'
+            """, (date,))
+            daily_appointments = cursor.fetchall()
+
+            # ⚡ OPTIMITZACIÓ: Query única per obtenir TOTES les taules
+            cursor.execute("""
+                SELECT id, table_number, capacity, pairing, status
+                FROM tables
+                ORDER BY capacity ASC, table_number
+            """)
+            all_tables = cursor.fetchall()
+
+            cursor.close()
+            self.return_connection(conn)
+
+            print(f"📊 [CHECK] Carregades {len(daily_appointments)} reserves i {len(all_tables)} taules")
+
             # Generar llista de slots cada 30 minuts
             available_slots = []
 
@@ -732,15 +856,22 @@ class AppointmentManager:
 
                     # Crear datetime per aquesta hora
                     check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
-                    check_datetime = barcelona_tz.localize(check_datetime_naive)
+                    check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
 
                     # Saltar si és en el passat
                     if check_datetime <= now:
                         continue
 
-                    # Comprovar disponibilitat
+                    # ⚡ OPTIMITZACIÓ: Calcular taules ocupades EN MEMÒRIA
                     end_datetime = check_datetime + timedelta(hours=1)
-                    tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
+
+                    occupied_ids = {
+                        apt[0] for apt in daily_appointments
+                        if apt[1] < end_datetime and apt[2] > check_datetime
+                    }
+
+                    # ⚡ OPTIMITZACIÓ: Buscar taules disponibles EN MEMÒRIA (sense queries)
+                    tables_result = self._find_tables_in_memory(all_tables, occupied_ids, num_people)
 
                     available_slots.append({
                         'time': check_time,
@@ -751,7 +882,8 @@ class AppointmentManager:
             # Filtrar només disponibles
             available_only = [s for s in available_slots if s['available']]
 
-            print(f"✅ [CHECK] Trobats {len(available_only)} slots disponibles de {len(available_slots)} comprovats")
+            print(f"✅ [CHECK OPTIMIZED] Trobats {len(available_only)} slots disponibles de {len(available_slots)} comprovats")
+            print(f"⚡ PERFORMANCE: 2 queries (abans: ~{len(available_slots) * 3} queries)")
 
             return {
                 'available': len(available_only) > 0,
@@ -775,16 +907,13 @@ class AppointmentManager:
 
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
-            # Crear timezone de Barcelona
-            barcelona_tz = pytz.timezone('Europe/Madrid')
-            
             # Parsejar la data/hora com a NAIVE
             naive_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
             print(f"🕐 [TIMEZONE DEBUG] Input rebut: date={date}, time={time}")
             print(f"🕐 [TIMEZONE DEBUG] Datetime NAIVE creat: {naive_datetime}")
-            
+
             # Convertir a timezone-aware (Barcelona)
-            start_time = barcelona_tz.localize(naive_datetime)
+            start_time = self.BARCELONA_TZ.localize(naive_datetime)
             print(f"🕐 [TIMEZONE DEBUG] Datetime AWARE (després localize): {start_time}")
             print(f"🕐 [TIMEZONE DEBUG] Timezone info: {start_time.tzinfo}")
             print(f"🕐 [TIMEZONE DEBUG] ISO format: {start_time.isoformat()}")
@@ -886,16 +1015,13 @@ class AppointmentManager:
                 time_part = new_time if new_time else current_start.strftime("%H:%M")
                 
                 print(f"🕐 [TIMEZONE DEBUG UPDATE] Input rebut: date={date_part}, time={time_part}")
-                
-                # Crear timezone de Barcelona
-                barcelona_tz = pytz.timezone('Europe/Madrid')
-                
+
                 # Parsejar com a NAIVE
                 naive_datetime = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
                 print(f"🕐 [TIMEZONE DEBUG UPDATE] Datetime NAIVE: {naive_datetime}")
-                
+
                 # Convertir a timezone-aware (Barcelona)
-                new_start = barcelona_tz.localize(naive_datetime)
+                new_start = self.BARCELONA_TZ.localize(naive_datetime)
                 print(f"🕐 [TIMEZONE DEBUG UPDATE] Datetime AWARE: {new_start}")
                 print(f"🕐 [TIMEZONE DEBUG UPDATE] ISO format: {new_start.isoformat()}")
             else:
@@ -1531,49 +1657,73 @@ class AppointmentManager:
 
 
 class ConversationManager:
+    """
+    Gestor de l'historial de converses
+
+    Optimitzacions:
+    - Usa el mateix connection pool que AppointmentManager
+    - clean_old_messages NO es crida a cada save (només via scheduler)
+    """
+
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
-    
+
     def get_connection(self):
-        """Crear connexió a PostgreSQL amb timezone correcte"""
-        conn = psycopg2.connect(self.database_url)
+        """Obtenir connexió del pool compartit"""
+        if AppointmentManager._connection_pool is None:
+            # Si no està inicialitzat, crear-lo
+            AppointmentManager._connection_pool = pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=20,
+                dsn=self.database_url
+            )
+        conn = AppointmentManager._connection_pool.getconn()
         cursor = conn.cursor()
         cursor.execute("SET timezone TO 'Europe/Madrid'")
         cursor.close()
         return conn
-    
+
+    def return_connection(self, conn):
+        """Retornar connexió al pool"""
+        if conn:
+            AppointmentManager._connection_pool.putconn(conn)
+
     def clean_old_messages(self):
-        """Eliminar missatges de més de 15 dies de TOTS els usuaris"""
+        """
+        Eliminar missatges de més de 15 dies de TOTS els usuaris
+        NOTA: Aquesta funció només s'hauria de cridar des del scheduler, NO a cada save!
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                DELETE FROM conversations 
+                DELETE FROM conversations
                 WHERE created_at < NOW() - INTERVAL '15 days'
             """)
-            
+
             deleted_count = cursor.rowcount
             if deleted_count > 0:
                 print(f"🧹 Netejats {deleted_count} missatges antics (>15 dies)")
-            
+
             conn.commit()
             cursor.close()
-            conn.close()
+            self.return_connection(conn)
         except Exception as e:
             print(f"❌ Error limpiando mensajes antiguos: {e}")
-    
+
     def save_message(self, phone, role, content):
-        """Guardar un missatge a l'historial"""
+        """
+        Guardar un missatge a l'historial
+        OPTIMITZAT: NO crida clean_old_messages (es fa via scheduler)
+        """
         try:
-            self.clean_old_messages()
-            
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("INSERT INTO conversations (phone, role, content) VALUES (%s, %s, %s)", (phone, role, content))
             conn.commit()
             cursor.close()
-            conn.close()
+            self.return_connection(conn)
         except Exception as e:
             print(f"❌ Error guardando mensaje: {e}")
     
