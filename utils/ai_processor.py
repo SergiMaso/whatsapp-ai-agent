@@ -250,12 +250,17 @@ INFORMACIÓ DEL RESTAURANT:
   * Sopar: 19:00 a 22:30
 
 FUNCIONS DISPONIBLES:
-1. create_appointment – Crear reserva nova
-2. update_appointment – Modificar reserva existent
-3. list_appointments – Veure reserves de l'usuari
-4. cancel_appointment – Cancel·lar reserva existent
-5. get_menu – Enviar menú o carta del restaurant
-6. save_customer_language – Guardar idioma i nom del client
+1. check_availability – Consultar disponibilitat per una data SENSE crear reserva (usa SEMPRE abans de create_appointment si el client pregunta per disponibilitat)
+2. create_appointment – Crear reserva nova
+3. update_appointment – Modificar reserva existent
+4. list_appointments – Veure reserves de l'usuari
+5. cancel_appointment – Cancel·lar reserva existent
+6. get_menu – Enviar menú o carta del restaurant
+7. save_customer_language – Guardar idioma i nom del client
+
+IMPORTANT WORKFLOW:
+- Si el client pregunta "quines hores tens?" o similars → Usa check_availability PRIMER
+- Després que vegin disponibilitat i confirmin hora → Usa create_appointment
 
 Sigues càlid, professional i proper.
 
@@ -275,12 +280,17 @@ INFORMACIÓN DEL RESTAURANTE:
   * Cena: 19:00 a 22:30
 
 FUNCIONES DISPONIBLES:
-1. create_appointment – Crear nueva reserva
-2. update_appointment – Modificar reserva existente
-3. list_appointments – Ver reservas del usuario
-4. cancel_appointment – Cancelar reserva existente
-5. get_menu – Enviar menú o carta del restaurante
-6. save_customer_language – Guardar idioma y nombre del cliente
+1. check_availability – Consultar disponibilidad para una fecha SIN crear reserva (usa SIEMPRE antes de create_appointment si el cliente pregunta por disponibilidad)
+2. create_appointment – Crear nueva reserva
+3. update_appointment – Modificar reserva existente
+4. list_appointments – Ver reservas del usuario
+5. cancel_appointment – Cancelar reserva existente
+6. get_menu – Enviar menú o carta del restaurante
+7. save_customer_language – Guardar idioma y nombre del cliente
+
+WORKFLOW IMPORTANTE:
+- Si el cliente pregunta "qué horas tienes?" o similares → Usa check_availability PRIMERO
+- Después de que vean disponibilidad y confirmen hora → Usa create_appointment
 
 Sé cálido, profesional y cercano.
 
@@ -300,12 +310,17 @@ RESTAURANT INFORMATION:
   * Dinner: 19:00 to 22:30
 
 AVAILABLE FUNCTIONS:
-1. create_appointment – Create a new reservation
-2. update_appointment – Modify an existing reservation
-3. list_appointments – View user reservations
-4. cancel_appointment – Cancel an existing reservation
-5. get_menu – Send restaurant menu or card
-6. save_customer_language – Save customer's language and name
+1. check_availability – Check availability for a date WITHOUT creating a reservation (ALWAYS use before create_appointment if client asks about availability)
+2. create_appointment – Create a new reservation
+3. update_appointment – Modify an existing reservation
+4. list_appointments – View user reservations
+5. cancel_appointment – Cancel an existing reservation
+6. get_menu – Send restaurant menu or card
+7. save_customer_language – Save customer's language and name
+
+IMPORTANT WORKFLOW:
+- If client asks "what times do you have?" or similar → Use check_availability FIRST
+- After they see availability and confirm a time → Use create_appointment
 
 Be warm, professional, and friendly.
 
@@ -399,6 +414,21 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                                 }
                             },
                             "required": ["menu_type"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "check_availability",
+                        "description": "Consultar disponibilitat de taules per una data i nombre de persones SENSE crear reserva. Usa aquesta funció quan el client pregunta per disponibilitat ('quines hores tens?', 'disponibilitat per dijous', etc.) abans de confirmar la reserva.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "date": {"type": "string", "description": "Data en format YYYY-MM-DD"},
+                                "num_people": {"type": "integer", "description": "Número de persones (1-8)"}
+                            },
+                            "required": ["date", "num_people"]
                         }
                     }
                 }
@@ -626,6 +656,53 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         'en': "Sorry, I don't have that menu available right now. You can check it at the restaurant."
                     }
                     assistant_reply = no_menu_msgs.get(language, no_menu_msgs['es'])
+
+            elif function_name == "check_availability":
+                # Consultar disponibilitat sense crear reserva
+                date = function_args.get('date')
+                num_people = function_args.get('num_people', 2)
+
+                result = appointment_manager.check_availability(date, num_people)
+
+                if result['available']:
+                    # Hi ha disponibilitat - mostrar slots disponibles
+                    available_slots = result.get('available_slots', [])
+
+                    # Agrupar per periode (dinar/sopar)
+                    lunch_slots = [s['time'] for s in available_slots if s.get('period') == 'lunch']
+                    dinner_slots = [s['time'] for s in available_slots if s.get('period') == 'dinner']
+
+                    if language == 'ca':
+                        header = f"✅ Disponibilitat per {num_people} persones el {date}:\n\n"
+                        if lunch_slots:
+                            header += f"🍽️ Dinar: {', '.join(lunch_slots)}\n"
+                        if dinner_slots:
+                            header += f"🌙 Sopar: {', '.join(dinner_slots)}\n"
+                        header += "\nQuina hora et va millor?"
+                    elif language == 'en':
+                        header = f"✅ Availability for {num_people} people on {date}:\n\n"
+                        if lunch_slots:
+                            header += f"🍽️ Lunch: {', '.join(lunch_slots)}\n"
+                        if dinner_slots:
+                            header += f"🌙 Dinner: {', '.join(dinner_slots)}\n"
+                        header += "\nWhich time works best for you?"
+                    else:
+                        header = f"✅ Disponibilidad para {num_people} personas el {date}:\n\n"
+                        if lunch_slots:
+                            header += f"🍽️ Comida: {', '.join(lunch_slots)}\n"
+                        if dinner_slots:
+                            header += f"🌙 Cena: {', '.join(dinner_slots)}\n"
+                        header += "\n¿Qué hora te va mejor?"
+
+                    assistant_reply = header
+                else:
+                    # No hi ha disponibilitat
+                    if language == 'ca':
+                        assistant_reply = f"😔 Ho sento, no tinc disponibilitat per {num_people} persones el {date}.\n\nVols que busqui en un altre dia?"
+                    elif language == 'en':
+                        assistant_reply = f"😔 Sorry, I don't have availability for {num_people} people on {date}.\n\nWould you like me to check another day?"
+                    else:
+                        assistant_reply = f"😔 Lo siento, no tengo disponibilidad para {num_people} personas el {date}.\n\n¿Quieres que busque en otro día?"
         else:
             assistant_reply = message_response.content
         

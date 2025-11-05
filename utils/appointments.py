@@ -657,6 +657,121 @@ class AppointmentManager:
                 'alternatives': []
             }
 
+    def check_availability(self, date, num_people, preferred_time=None):
+        """
+        Consultar disponibilitat per una data i nombre de persones
+        Retorna una llista de slots disponibles (sense crear cap reserva)
+
+        Args:
+            date: Data en format YYYY-MM-DD
+            num_people: Nombre de persones
+            preferred_time: Hora preferida (opcional, en format HH:MM)
+
+        Retorna:
+            {
+                'available': True/False,
+                'slots': [{'time': 'HH:MM', 'available': True}, ...],
+                'message': 'Missatge descriptiu'
+            }
+        """
+        try:
+            barcelona_tz = pytz.timezone('Europe/Madrid')
+            now = datetime.now(barcelona_tz)
+
+            print(f"🔍 [CHECK] Consultant disponibilitat per {date} - {num_people} persones")
+
+            # Obtenir horaris d'obertura
+            hours = self.get_opening_hours(date)
+
+            if hours['status'] == 'closed':
+                print(f"❌ [CHECK] Restaurant tancat el {date}")
+                return {
+                    'available': False,
+                    'slots': [],
+                    'message': f'El restaurant està tancat el {date}'
+                }
+
+            # Obtenir intervals d'horari
+            time_slots = []
+            if hours['status'] in ['full_day', 'lunch_only'] and hours['lunch_start'] and hours['lunch_end']:
+                time_slots.append({
+                    'start': hours['lunch_start'],
+                    'end': hours['lunch_end'],
+                    'name': 'lunch'
+                })
+
+            if hours['status'] in ['full_day', 'dinner_only'] and hours['dinner_start'] and hours['dinner_end']:
+                time_slots.append({
+                    'start': hours['dinner_start'],
+                    'end': hours['dinner_end'],
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                return {
+                    'available': False,
+                    'slots': [],
+                    'message': f'No hi ha horaris definits per {date}'
+                }
+
+            # Generar llista de slots cada 30 minuts
+            available_slots = []
+
+            for slot in time_slots:
+                slot_start_parts = slot['start'].split(':')
+                slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+
+                slot_end_parts = slot['end'].split(':')
+                slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                # Generar slots cada 30 minuts
+                for check_minutes in range(slot_start_minutes, slot_end_minutes - 60, 30):
+                    check_hour = check_minutes // 60
+                    check_minute = check_minutes % 60
+                    check_time = f"{check_hour:02d}:{check_minute:02d}"
+
+                    # Crear datetime per aquesta hora
+                    check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
+                    check_datetime = barcelona_tz.localize(check_datetime_naive)
+
+                    # Saltar si és en el passat
+                    if check_datetime <= now:
+                        continue
+
+                    # Comprovar disponibilitat
+                    end_datetime = check_datetime + timedelta(hours=1)
+                    tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
+
+                    available_slots.append({
+                        'time': check_time,
+                        'available': tables_result is not None,
+                        'period': slot['name']
+                    })
+
+            # Filtrar només disponibles
+            available_only = [s for s in available_slots if s['available']]
+
+            print(f"✅ [CHECK] Trobats {len(available_only)} slots disponibles de {len(available_slots)} comprovats")
+
+            return {
+                'available': len(available_only) > 0,
+                'slots': available_slots,
+                'available_slots': available_only,
+                'date': date,
+                'num_people': num_people,
+                'message': f'Disponibilitat per {num_people} persones el {date}'
+            }
+
+        except Exception as e:
+            print(f"❌ Error consultant disponibilitat: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'available': False,
+                'slots': [],
+                'message': 'Error consultant disponibilitat'
+            }
+
 
     def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
         try:
