@@ -1807,7 +1807,7 @@ class ConversationManager:
                 self.return_connection(conn)
 
     def get_history(self, phone, limit=10):
-        """Obtenir historial de conversa NOMÉS de la última hora"""
+        """Obtenir historial de conversa NOMÉS dels últims 20 minuts"""
         conn = None
         try:
             conn = self.get_connection()
@@ -1817,7 +1817,7 @@ class ConversationManager:
                 SELECT role, content
                 FROM conversations
                 WHERE phone = %s
-                  AND created_at > NOW() - INTERVAL '1 hour'
+                  AND created_at > NOW() - INTERVAL '20 minutes'
                 ORDER BY created_at DESC
                 LIMIT %s
             """, (phone, limit))
@@ -1848,7 +1848,7 @@ class ConversationManager:
                 self.return_connection(conn)
 
     def get_message_count(self, phone):
-        """Comptar missatges de la última hora"""
+        """Comptar missatges dels últims 20 minuts"""
         conn = None
         try:
             conn = self.get_connection()
@@ -1859,7 +1859,7 @@ class ConversationManager:
                 FROM conversations
                 WHERE phone = %s
                   AND role = 'user'
-                  AND created_at > NOW() - INTERVAL '1 hour'
+                  AND created_at > NOW() - INTERVAL '20 minutes'
             """, (phone,))
 
             count = cursor.fetchone()[0]
