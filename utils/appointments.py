@@ -1635,6 +1635,20 @@ class ConversationManager:
         if conn:
             AppointmentManager._connection_pool.putconn(conn)
 
+    @contextmanager
+    def get_db_connection(self):
+        """
+        Context manager per gestionar connexions automàticament
+        Comparteix el pool amb AppointmentManager
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            yield conn
+        finally:
+            if conn:
+                self.return_connection(conn)
+
     def clean_old_messages(self):
         """
         Eliminar missatges de més de 15 dies de TOTS els usuaris

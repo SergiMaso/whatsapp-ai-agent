@@ -3,7 +3,7 @@ import json
 from langdetect import detect, LangDetectException
 from dotenv import load_dotenv
 from openai import OpenAI
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from unidecode import unidecode
 from utils.appointments import AppointmentManager, ConversationManager
@@ -532,7 +532,6 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                                 same_period_slots.append(slot['time'])
 
                     # Buscar proper dia disponible (provem els propers 7 dies)
-                    from datetime import datetime, timedelta
                     next_day_info = None
                     date_obj = datetime.strptime(requested_date, '%Y-%m-%d').date()
                     for i in range(1, 8):
