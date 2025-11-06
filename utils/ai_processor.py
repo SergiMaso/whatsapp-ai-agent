@@ -489,13 +489,83 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 elif 'alternative' in result:
                     # Hi ha una alternativa disponible
                     alt = result['alternative']
-                    
+                    requested_time = function_args['time']
+                    requested_date = function_args['date']
+
+                    # Determinar si l'hora sol·licitada és dinar o sopar
+                    hour = int(requested_time.split(':')[0])
+                    is_lunch = 12 <= hour < 17
+                    is_dinner = hour >= 19
+
+                    # Buscar més alternatives el mateix dia i proper dia
+                    same_day_availability = appointment_manager.check_availability(requested_date, num_people)
+
+                    # Filtrar alternatives pel mateix torn (dinar o sopar)
+                    same_period_slots = []
+                    if same_day_availability and same_day_availability.get('available'):
+                        for slot in same_day_availability.get('available_slots', []):
+                            if is_lunch and slot.get('period') == 'lunch':
+                                same_period_slots.append(slot['time'])
+                            elif is_dinner and slot.get('period') == 'dinner':
+                                same_period_slots.append(slot['time'])
+
+                    # Buscar proper dia disponible (provem els propers 7 dies)
+                    from datetime import datetime, timedelta
+                    next_day_info = None
+                    date_obj = datetime.strptime(requested_date, '%Y-%m-%d').date()
+                    for i in range(1, 8):
+                        next_date = (date_obj + timedelta(days=i)).strftime('%Y-%m-%d')
+                        next_availability = appointment_manager.check_availability(next_date, num_people)
+                        if next_availability and next_availability.get('available'):
+                            slots = next_availability.get('available_slots', [])
+                            if slots:
+                                times = [s['time'] for s in slots[:3]]  # Primeres 3 hores
+                                next_day_info = {'date': next_date, 'times': times}
+                                break
+
+                    # Construir missatge
                     if language == 'ca':
-                        assistant_reply = f"⚠️ Ho sento, l'hora {function_args['time']} del {function_args['date']} no està disponible.\n\n✅ Però tinc disponible:\n📅 {alt['date']}\n🕐 {alt['time']}\n\nT'interessa aquesta hora? Si vols una altra, digues-m'ho!"
+                        period_name = "dinar" if is_lunch else "sopar"
+                        msg = f"⚠️ Ho sento però no tenim disponibilitat per {num_people} persones a les {requested_time}.\n\n"
+
+                        if same_period_slots:
+                            msg += f"✅ En aquest mateix dia tenim hora de {period_name} a les:\n"
+                            msg += "🕐 " + ", ".join(same_period_slots) + "\n\n"
+
+                        if next_day_info:
+                            msg += f"📅 El dia més pròxim amb disponibilitat és el {next_day_info['date']} a les:\n"
+                            msg += "🕐 " + ", ".join(next_day_info['times']) + "\n\n"
+
+                        msg += "Quina hora t'interessa?"
+                        assistant_reply = msg
                     elif language == 'en':
-                        assistant_reply = f"⚠️ Sorry, {function_args['time']} on {function_args['date']} is not available.\n\n✅ But I have available:\n📅 {alt['date']}\n🕐 {alt['time']}\n\nWould you like this time? If you prefer another, let me know!"
+                        period_name = "lunch" if is_lunch else "dinner"
+                        msg = f"⚠️ Sorry, we don't have availability for {num_people} people at {requested_time}.\n\n"
+
+                        if same_period_slots:
+                            msg += f"✅ On the same day we have {period_name} at:\n"
+                            msg += "🕐 " + ", ".join(same_period_slots) + "\n\n"
+
+                        if next_day_info:
+                            msg += f"📅 The next available day is {next_day_info['date']} at:\n"
+                            msg += "🕐 " + ", ".join(next_day_info['times']) + "\n\n"
+
+                        msg += "Which time works for you?"
+                        assistant_reply = msg
                     else:
-                        assistant_reply = f"⚠️ Lo siento, la hora {function_args['time']} del {function_args['date']} no está disponible.\n\n✅ Pero tengo disponible:\n📅 {alt['date']}\n🕐 {alt['time']}\n\n¿Te interesa esta hora? Si quieres otra, dímelo!"
+                        period_name = "comida" if is_lunch else "cena"
+                        msg = f"⚠️ Lo siento pero no tenemos disponibilidad para {num_people} personas a las {requested_time}.\n\n"
+
+                        if same_period_slots:
+                            msg += f"✅ En este mismo día tenemos hora de {period_name} a las:\n"
+                            msg += "🕐 " + ", ".join(same_period_slots) + "\n\n"
+
+                        if next_day_info:
+                            msg += f"📅 El día más próximo con disponibilidad es el {next_day_info['date']} a las:\n"
+                            msg += "🕐 " + ", ".join(next_day_info['times']) + "\n\n"
+
+                        msg += "¿Qué hora te interesa?"
+                        assistant_reply = msg
                 
                 else:
                     # No hi ha disponibilitat
