@@ -220,50 +220,46 @@ def elevenlabs_test():
 def get_appointments():
     """Obtenir totes les reserves (requere login)"""
     try:
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        # Configurar timezone per la sessió
-        cursor.execute("SET timezone TO 'Europe/Madrid'")
-        
-        # Obtenir reserves amb informació de taula i notes
-        cursor.execute("""
-            SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time, 
-                   a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes, a.table_id,
-                   a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes
-            FROM appointments a
-            LEFT JOIN tables t ON a.table_id = t.id
-            ORDER BY a.start_time DESC
-        """)
-        
-        appointments = []
-        for row in cursor.fetchall():
-            appointments.append({
-                'id': row[0],
-                'phone': row[1],
-                'client_name': row[2],
-                'date': row[3].isoformat() if row[3] else None,
-                'start_time': row[4].isoformat() if row[4] else None,
-                'end_time': row[5].isoformat() if row[5] else None,
-                'num_people': row[6],
-                'status': row[7],
-                'table_number': row[8],
-                'table_capacity': row[9],
-                'created_at': row[10].isoformat() if row[10] else None,
-                'notes': row[11],
-                'table_id': row[12],
-                'seated_at': row[13].isoformat() if row[13] else None,
-                'left_at': row[14].isoformat() if row[14] else None,
-                'duration_minutes': row[15],
-                'no_show': row[16],
-                'delay_minutes': row[17]
-            })
-        
-        cursor.close()
-        conn.close()
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Configurar timezone per la sessió
+                cursor.execute("SET timezone TO 'Europe/Madrid'")
+
+                # Obtenir reserves amb informació de taula i notes
+                cursor.execute("""
+                    SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
+                           a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes, a.table_id,
+                           a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes
+                    FROM appointments a
+                    LEFT JOIN tables t ON a.table_id = t.id
+                    ORDER BY a.start_time DESC
+                """)
+
+                appointments = []
+                for row in cursor.fetchall():
+                    appointments.append({
+                        'id': row[0],
+                        'phone': row[1],
+                        'client_name': row[2],
+                        'date': row[3].isoformat() if row[3] else None,
+                        'start_time': row[4].isoformat() if row[4] else None,
+                        'end_time': row[5].isoformat() if row[5] else None,
+                        'num_people': row[6],
+                        'status': row[7],
+                        'table_number': row[8],
+                        'table_capacity': row[9],
+                        'created_at': row[10].isoformat() if row[10] else None,
+                        'notes': row[11],
+                        'table_id': row[12],
+                        'seated_at': row[13].isoformat() if row[13] else None,
+                        'left_at': row[14].isoformat() if row[14] else None,
+                        'duration_minutes': row[15],
+                        'no_show': row[16],
+                        'delay_minutes': row[17]
+                    })
+
         return jsonify(appointments), 200
-    
+
     except Exception as e:
         print(f"❌ Error obtenint reserves: {e}")
         return jsonify({'error': str(e)}), 500
@@ -352,20 +348,18 @@ def update_appointment_api(appointment_id):
     """Actualitzar una reserva (requere Owner/Admin)"""
     try:
         data = request.json
-        
+
         # Obtenir phone de la reserva existent
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
+                row = cursor.fetchone()
+
         if not row:
             return jsonify({'error': 'Reserva no trobada'}), 404
-        
+
         phone = row[0]
-        
+
         # Actualitzar (ara incloent table_id)
         result = appointment_manager.update_appointment(
             phone=phone,
@@ -375,16 +369,16 @@ def update_appointment_api(appointment_id):
             new_num_people=data.get('num_people'),
             new_table_id=data.get('table_id')
         )
-        
+
         if not result:
             return jsonify({'error': 'No s\'ha pogut actualitzar la reserva'}), 409
-        
+
         return jsonify({
             'message': 'Reserva actualitzada correctament',
             'appointment_id': result['id'],
             'table': result['table']
         }), 200
-    
+
     except Exception as e:
         print(f"❌ Error actualitzant reserva: {e}")
         return jsonify({'error': str(e)}), 500
@@ -395,16 +389,14 @@ def delete_appointment_api(appointment_id):
     """Cancel·lar una reserva (requere Owner/Admin)"""
     try:
         # Obtenir phone de la reserva
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
+                row = cursor.fetchone()
+
         if not row:
             return jsonify({'error': 'Reserva no trobada'}), 404
-        
+
         phone = row[0]
         
         # Cancel·lar
@@ -455,30 +447,26 @@ def add_notes_to_appointment_api(appointment_id):
 def get_tables():
     """Obtenir totes les taules"""
     try:
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, table_number, capacity, status, pairing
-            FROM tables
-            ORDER BY table_number
-        """)
-        
-        tables = []
-        for row in cursor.fetchall():
-            tables.append({
-                'id': row[0],
-                'table_number': row[1],
-                'capacity': row[2],
-                'status': row[3],
-                'pairing': row[4] if row[4] else []
-            })
-        
-        cursor.close()
-        conn.close()
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, table_number, capacity, status, pairing
+                    FROM tables
+                    ORDER BY table_number
+                """)
+
+                tables = []
+                for row in cursor.fetchall():
+                    tables.append({
+                        'id': row[0],
+                        'table_number': row[1],
+                        'capacity': row[2],
+                        'status': row[3],
+                        'pairing': row[4] if row[4] else []
+                    })
+
         return jsonify(tables), 200
-    
+
     except Exception as e:
         print(f"❌ Error obtenint taules: {e}")
         return jsonify({'error': str(e)}), 500
@@ -738,49 +726,45 @@ def delete_table(table_id):
 def get_customers():
     """Obtenir tots els clients"""
     try:
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT 
-                c.phone, 
-                c.name, 
-                c.language, 
-                c.visit_count, 
-                c.last_visit,
-                CASE 
-                    WHEN EXISTS (
-                        SELECT 1 FROM appointments a 
-                        WHERE a.phone = c.phone 
-                        AND a.date = CURRENT_DATE 
-                        AND a.status IN ('confirmed', 'completed')
-                    ) THEN 1 
-                    ELSE 0 
-                END as has_reservation_today
-            FROM customers c
-            WHERE c.name != 'TEMP'
-            ORDER BY 
-                has_reservation_today DESC,  -- Primer: amb reserva avui (confirmed o completed)
-                c.visit_count DESC,          -- Segon: més visites
-                c.last_visit DESC            -- Tercer: més recents
-        """)
-        
-        customers = []
-        for row in cursor.fetchall():
-            customers.append({
-                'phone': row[0],
-                'name': row[1],
-                'language': row[2],
-                'visit_count': row[3],
-                'last_visit': row[4].isoformat() if row[4] else None,
-                'has_reservation_today': bool(row[5])
-            })
-        
-        cursor.close()
-        conn.close()
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT
+                        c.phone,
+                        c.name,
+                        c.language,
+                        c.visit_count,
+                        c.last_visit,
+                        CASE
+                            WHEN EXISTS (
+                                SELECT 1 FROM appointments a
+                                WHERE a.phone = c.phone
+                                AND a.date = CURRENT_DATE
+                                AND a.status IN ('confirmed', 'completed')
+                            ) THEN 1
+                            ELSE 0
+                        END as has_reservation_today
+                    FROM customers c
+                    WHERE c.name != 'TEMP'
+                    ORDER BY
+                        has_reservation_today DESC,  -- Primer: amb reserva avui (confirmed o completed)
+                        c.visit_count DESC,          -- Segon: més visites
+                        c.last_visit DESC            -- Tercer: més recents
+                """)
+
+                customers = []
+                for row in cursor.fetchall():
+                    customers.append({
+                        'phone': row[0],
+                        'name': row[1],
+                        'language': row[2],
+                        'visit_count': row[3],
+                        'last_visit': row[4].isoformat() if row[4] else None,
+                        'has_reservation_today': bool(row[5])
+                    })
+
         return jsonify(customers), 200
-    
+
     except Exception as e:
         print(f"❌ Error obtenint clients: {e}")
         return jsonify({'error': str(e)}), 500
