@@ -10,6 +10,9 @@ from utils.appointments import AppointmentManager, ConversationManager
 from utils.media_manager import MediaManager
 load_dotenv()
 
+# Cache d'idiomes en memòria per evitar canvis inesperats quan BD falla
+LANGUAGE_CACHE = {}
+
 def detect_language(text):
     """
     Detecta l'idioma del text comptant coincidències amb keywords
@@ -89,26 +92,45 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     print(f"📝 Missatge rebut: '{message}'")
 
     # --- STEP 1: Gestió de l'idioma ---
-    saved_language = appointment_manager.get_customer_language(phone)
+    # PRIORITAT: Cache en memòria > Base de dades > Detecció automàtica
+    cached_language = LANGUAGE_CACHE.get(phone)
+    saved_language = None
+
+    try:
+        saved_language = appointment_manager.get_customer_language(phone)
+    except Exception as e:
+        print(f"⚠️ Error obtenint idioma de BD (usant cache): {e}")
+
     message_count = conversation_manager.get_message_count(phone)
 
+    # Si hi ha idioma guardat en BD o cache, SEMPRE usar-lo (no canviar mai)
     if saved_language:
         language = saved_language
+        LANGUAGE_CACHE[phone] = language  # Actualitzar cache
         print(f"🌍 Client conegut - Idioma mantingut: {language}")
+    elif cached_language:
+        language = cached_language
+        print(f"💾 Idioma des de cache (BD no disponible): {language}")
     else:
+        # Client nou: detectar idioma
         if message_count == 0:
             # Primer missatge: detectar però NO guardar encara
             language = detect_language(message)
+            LANGUAGE_CACHE[phone] = language  # Guardar en cache
             print(f"👋 Primer missatge → Idioma detectat (temporal, no guardat): {language}")
         elif message_count == 1:
             # Segon missatge: ara sí que el guardem!
             new_language = detect_language(message)
-            appointment_manager.save_customer_language(phone, new_language)
+            try:
+                appointment_manager.save_customer_language(phone, new_language)
+            except Exception as e:
+                print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
+            LANGUAGE_CACHE[phone] = new_language  # Guardar en cache
             language = new_language
             print(f"🔄 Segon missatge → Idioma detectat i guardat: {new_language}")
         else:
-            # A partir del tercer missatge
-            language = appointment_manager.get_customer_language(phone) or 'es'
+            # A partir del tercer missatge: usar el que tinguem (cache o BD)
+            language = LANGUAGE_CACHE.get(phone) or saved_language or 'es'
             print(f"📌 Tercer missatge o més → idioma: {language}")
 
     print(f"✅ Idioma final: {language}")
