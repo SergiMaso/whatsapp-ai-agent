@@ -558,18 +558,20 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                             elif is_dinner and slot.get('period') == 'dinner':
                                 same_period_slots.append(slot['time'])
 
-                    # Buscar proper dia disponible (provem els propers 7 dies)
+                    # NOMÉS buscar proper dia disponible si NO hi ha disponibilitat el mateix dia
                     next_day_info = None
-                    date_obj = datetime.strptime(requested_date, '%Y-%m-%d').date()
-                    for i in range(1, 8):
-                        next_date = (date_obj + timedelta(days=i)).strftime('%Y-%m-%d')
-                        next_availability = appointment_manager.check_availability(next_date, num_people)
-                        if next_availability and next_availability.get('available'):
-                            slots = next_availability.get('available_slots', [])
-                            if slots:
-                                times = [s['time'] for s in slots[:3]]  # Primeres 3 hores
-                                next_day_info = {'date': next_date, 'times': times}
-                                break
+                    if not same_period_slots:
+                        # No hi ha alternatives el mateix dia - busquem en els propers dies
+                        date_obj = datetime.strptime(requested_date, '%Y-%m-%d').date()
+                        for i in range(1, 8):
+                            next_date = (date_obj + timedelta(days=i)).strftime('%Y-%m-%d')
+                            next_availability = appointment_manager.check_availability(next_date, num_people)
+                            if next_availability and next_availability.get('available'):
+                                slots = next_availability.get('available_slots', [])
+                                if slots:
+                                    times = [s['time'] for s in slots[:3]]  # Primeres 3 hores
+                                    next_day_info = {'date': next_date, 'times': times}
+                                    break
 
                     # Construir missatge
                     if language == 'ca':
@@ -577,42 +579,57 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         msg = f"⚠️ Ho sento però no tenim disponibilitat per {num_people} persones a les {requested_time}.\n\n"
 
                         if same_period_slots:
+                            # Hi ha disponibilitat el mateix dia
                             msg += f"✅ En aquest mateix dia tenim hora de {period_name} a les:\n"
                             msg += "🕐 " + ", ".join(same_period_slots) + "\n\n"
-
-                        if next_day_info:
+                            msg += "Quina hora t'interessa? Si no et van bé aquestes hores, puc buscar-te un altre dia."
+                        elif next_day_info:
+                            # No hi ha disponibilitat el mateix dia, però sí en els propers dies
                             msg += f"📅 El dia més pròxim amb disponibilitat és el {next_day_info['date']} a les:\n"
                             msg += "🕐 " + ", ".join(next_day_info['times']) + "\n\n"
+                            msg += "Quina hora t'interessa?"
+                        else:
+                            # No hi ha disponibilitat en cap dia
+                            msg += "😔 No tinc disponibilitat en els propers dies. Vols que busqui per un altra data més endavant?"
 
-                        msg += "Quina hora t'interessa?"
                         assistant_reply = msg
                     elif language == 'en':
                         period_name = "lunch" if is_lunch else "dinner"
                         msg = f"⚠️ Sorry, we don't have availability for {num_people} people at {requested_time}.\n\n"
 
                         if same_period_slots:
+                            # There's availability on the same day
                             msg += f"✅ On the same day we have {period_name} at:\n"
                             msg += "🕐 " + ", ".join(same_period_slots) + "\n\n"
-
-                        if next_day_info:
+                            msg += "Which time works for you? If these times don't work, I can look for another day."
+                        elif next_day_info:
+                            # No availability on the same day, but available on upcoming days
                             msg += f"📅 The next available day is {next_day_info['date']} at:\n"
                             msg += "🕐 " + ", ".join(next_day_info['times']) + "\n\n"
+                            msg += "Which time works for you?"
+                        else:
+                            # No availability on any day
+                            msg += "😔 I don't have availability in the coming days. Would you like me to search for a later date?"
 
-                        msg += "Which time works for you?"
                         assistant_reply = msg
                     else:
                         period_name = "comida" if is_lunch else "cena"
                         msg = f"⚠️ Lo siento pero no tenemos disponibilidad para {num_people} personas a las {requested_time}.\n\n"
 
                         if same_period_slots:
+                            # Hay disponibilidad el mismo día
                             msg += f"✅ En este mismo día tenemos hora de {period_name} a las:\n"
                             msg += "🕐 " + ", ".join(same_period_slots) + "\n\n"
-
-                        if next_day_info:
+                            msg += "¿Qué hora te interesa? Si no te van bien estas horas, puedo buscarte otro día."
+                        elif next_day_info:
+                            # No hay disponibilidad el mismo día, pero sí en los próximos días
                             msg += f"📅 El día más próximo con disponibilidad es el {next_day_info['date']} a las:\n"
                             msg += "🕐 " + ", ".join(next_day_info['times']) + "\n\n"
+                            msg += "¿Qué hora te interesa?"
+                        else:
+                            # No hay disponibilidad en ningún día
+                            msg += "😔 No tengo disponibilidad en los próximos días. ¿Quieres que busque para otra fecha más adelante?"
 
-                        msg += "¿Qué hora te interesa?"
                         assistant_reply = msg
                 
                 else:
