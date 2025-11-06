@@ -581,8 +581,9 @@ class AppointmentManager:
                 if start_checking_from % 30 != 0:
                     start_checking_from = ((start_checking_from // 30) + 1) * 30
 
-                # Iterar cada 30 minuts
-                for check_minutes in range(start_checking_from, slot_end_minutes - 60, 30):  # -60 per deixar 1h mín
+                # Iterar cada 30 minuts fins l'hora de tancament (inclosa)
+                # L'hora de tancament és l'hora d'INICI de l'última reserva possible
+                for check_minutes in range(start_checking_from, slot_end_minutes + 1, 30):
                     check_hour = check_minutes // 60
                     check_minute = check_minutes % 60
                     check_time = f"{check_hour:02d}:{check_minute:02d}"
@@ -859,8 +860,9 @@ class AppointmentManager:
                         slot_end_parts = slot['end'].split(':')
                         slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
 
-                        # Generar slots cada 30 minuts
-                        for check_minutes in range(slot_start_minutes, slot_end_minutes - 60, 30):
+                        # Generar slots cada 30 minuts fins l'hora de tancament (inclosa)
+                        # L'hora de tancament és l'hora d'INICI de l'última reserva possible
+                        for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, 30):
                             check_hour = check_minutes // 60
                             check_minute = check_minutes % 60
                             check_time = f"{check_hour:02d}:{check_minute:02d}"
