@@ -1709,16 +1709,27 @@ def voice_webhook():
         
         # Configurar Stream amb paràmetres per Eleven Labs
         stream = connect.stream(url=ws_url)
-        
+
         # Paràmetres opcionals (si Eleven Labs els necessita)
         # stream.parameter(name='phone', value=clean_phone)
-        
+
         # LOGS DETALLATS - TwiML generat
         twiml_str = str(response)
-        logger.info(f"📤 TwiML Response generat:\n{twiml_str}")
+        logger.info("=" * 80)
+        logger.info(f"📤 TwiML Response generat:")
+        logger.info(twiml_str)
+        logger.info("=" * 80)
         logger.info(f"📏 Longitud TwiML: {len(twiml_str)} bytes")
-        logger.info("✅ Redirecció a Eleven Labs configurada")
-        
+        logger.info(f"🔗 WebSocket URL enviat a Twilio:")
+        logger.info(f"   {ws_url}")
+        logger.info("=" * 80)
+        logger.info("✅ Resposta TwiML enviada a Twilio")
+        logger.info("🔄 Ara Twilio hauria de connectar al WebSocket d'ElevenLabs")
+        logger.info("🔄 Si ElevenLabs accepta la connexió, cridarà /elevenlabs/init")
+        logger.info("🔄 MIRA ELS LOGS - Si NO veus '🎉 ELEVENLABS /INIT CRIDAT!' en els propers segons,")
+        logger.info("🔄 significa que ElevenLabs NO té configurat el webhook o rebutja la connexió")
+        logger.info("=" * 80)
+
         return twiml_str
 
     except Exception as e:
@@ -1808,21 +1819,59 @@ def voice_status():
     call_status = request.values.get('CallStatus', '')
     phone = request.values.get('From', '')
     call_sid = request.values.get('CallSid', '')
-    
+
     # LOGS DETALLATS - Tota la informació del status
     call_duration = request.values.get('CallDuration', '0')
     recording_duration = request.values.get('RecordingDuration', '0')
-    
+
+    # NOUS LOGS - Capturar errors de WebSocket de Twilio
+    error_code = request.values.get('ErrorCode', '')
+    error_message = request.values.get('ErrorMessage', '')
+    stream_sid = request.values.get('StreamSid', '')
+
     logger.info(f"📊 Estat de trucada: {call_status} | Telèfon: {phone} | CallSid: {call_sid}")
     logger.info(f"⏱️ Duració trucada: {call_duration} segons")
+
+    # LOG ERROR SI EXISTEIX
+    if error_code:
+        logger.error("=" * 80)
+        logger.error(f"🚨 ERROR TWILIO DETECTAT!")
+        logger.error(f"🚨 Error Code: {error_code}")
+        logger.error(f"🚨 Error Message: {error_message}")
+        logger.error(f"🔍 Stream SID: {stream_sid}")
+        logger.error(f"🔍 Call SID: {call_sid}")
+        logger.error("=" * 80)
+
+        # Error 31921 és específic de WebSocket close
+        if error_code == '31921':
+            logger.error("💥 ERROR 31921: WebSocket tancat per ElevenLabs")
+            logger.error("🔍 DIAGNÒSTIC:")
+            logger.error("   ❌ ElevenLabs ha tancat la connexió WebSocket immediatament")
+            logger.error("   ❌ Possibles causes:")
+            logger.error("      1. Webhook /elevenlabs/init NO configurat a ElevenLabs")
+            logger.error("      2. Agent ID invàlid o agent no existeix")
+            logger.error("      3. Agent no té activada la integració de Twilio Stream")
+            logger.error("      4. Problemes d'autenticació amb ElevenLabs")
+            logger.error("      5. Quota d'ElevenLabs exhaurida")
+            logger.error("=" * 80)
+
     logger.info(f"📋 Status.values complet: {dict(request.values)}")
+    logger.info(f"🔑 Status.headers: {dict(request.headers)}")
 
     if call_status == 'completed':
         logger.info(f"✅ Trucada completada: {call_sid}")
-        if int(call_duration) < 3:
-            logger.warning(f"⚠️ TRUCADA MASSA CURTA! Només {call_duration}s - possiblement connexió WebSocket fallida")
+        if int(call_duration) < 5:
+            logger.warning("⚠️" * 40)
+            logger.warning(f"⚠️ TRUCADA MASSA CURTA! Només {call_duration}s")
+            logger.warning(f"⚠️ Això indica que ElevenLabs ha tancat el WebSocket immediatament")
+            logger.warning(f"⚠️ REVISA:")
+            logger.warning(f"⚠️   1. Configura /elevenlabs/init a ElevenLabs com a 'Conversation Init Webhook'")
+            logger.warning(f"⚠️   2. URL: https://web-production-261e.up.railway.app/elevenlabs/init")
+            logger.warning(f"⚠️   3. Verifica que l'agent tingui activada la integració de Twilio")
+            logger.warning("⚠️" * 40)
     elif call_status == 'failed':
-        logger.warning(f"❌ Trucada fallida: {call_sid}")
+        logger.error(f"❌ Trucada fallida: {call_sid}")
+        logger.error(f"❌ Motiu: {error_message if error_message else 'Desconegut'}")
     elif call_status == 'busy':
         logger.warning(f"📵 Número ocupat: {phone}")
     elif call_status == 'no-answer':
@@ -1856,11 +1905,16 @@ def elevenlabs_init():
     Webhook cridat per ElevenLabs quan comença una conversa
     Retorna les dades del client (nom, idioma, data actual, telèfon)
     """
-    logger.info("=" * 70)
+    logger.info("=" * 80)
+    logger.info("🎉 " * 20)
+    logger.info("🎉 ELEVENLABS /INIT CRIDAT! - ElevenLabs està connectant!")
+    logger.info("🎉 " * 20)
     logger.info(f"🔄 [ELEVEN LABS INIT] Webhook cridat! Method: {request.method}")
     logger.info(f"🔄 [ELEVEN LABS INIT] URL: {request.url}")
     logger.info(f"🔄 [ELEVEN LABS INIT] Path: {request.path}")
-    logger.info("=" * 70)
+    logger.info(f"🔄 [ELEVEN LABS INIT] Remote IP: {request.remote_addr}")
+    logger.info(f"🔄 [ELEVEN LABS INIT] User Agent: {request.headers.get('User-Agent', 'N/A')}")
+    logger.info("=" * 80)
     
     # Si és GET, retornar info de que el webhook està actiu
     if request.method == 'GET':
