@@ -1708,7 +1708,14 @@ def voice_webhook():
             raise ValueError(f"WebSocket URL invàlida: {ws_url}")
         
         # Configurar Stream amb paràmetres per Eleven Labs
-        stream = connect.stream(url=ws_url)
+        # IMPORTANT: Afegim statusCallback per veure què passa amb el WebSocket
+        stream = connect.stream(
+            url=ws_url,
+            statusCallback='https://web-production-261e.up.railway.app/voice/stream/events',
+            statusCallbackMethod='POST'
+        )
+
+        logger.info(f"🔔 Status callback configurat: /voice/stream/events")
 
         # Paràmetres opcionals (si Eleven Labs els necessita)
         # stream.parameter(name='phone', value=clean_phone)
@@ -1824,13 +1831,27 @@ def voice_status():
     call_duration = request.values.get('CallDuration', '0')
     recording_duration = request.values.get('RecordingDuration', '0')
 
-    # NOUS LOGS - Capturar errors de WebSocket de Twilio
+    # NOUS LOGS - Capturar TOTS els possibles errors i informació de Twilio
     error_code = request.values.get('ErrorCode', '')
     error_message = request.values.get('ErrorMessage', '')
     stream_sid = request.values.get('StreamSid', '')
 
+    # Capturar més camps d'error possibles
+    recording_url = request.values.get('RecordingUrl', '')
+    recording_sid = request.values.get('RecordingSid', '')
+    parent_call_sid = request.values.get('ParentCallSid', '')
+    answered_by = request.values.get('AnsweredBy', '')
+
     logger.info(f"📊 Estat de trucada: {call_status} | Telèfon: {phone} | CallSid: {call_sid}")
     logger.info(f"⏱️ Duració trucada: {call_duration} segons")
+
+    # Informació addicional útil
+    if stream_sid:
+        logger.info(f"📡 Stream SID: {stream_sid}")
+    if answered_by:
+        logger.info(f"📞 Answered by: {answered_by}")
+    if parent_call_sid:
+        logger.info(f"🔗 Parent Call SID: {parent_call_sid}")
 
     # LOG ERROR SI EXISTEIX
     if error_code:
@@ -1893,6 +1914,56 @@ def voice_hangup():
 
     logger.info(f"👋 Trucada penjada | De: {phone} | Duració: {call_duration}s")
     return jsonify({'status': 'ok'}), 200
+
+# --------------------------------------------------------------------------
+# CALLBACK D'ESDEVENIMENTS DEL WEBSOCKET STREAM
+# --------------------------------------------------------------------------
+@app.route('/voice/stream/events', methods=['POST'])
+def voice_stream_events():
+    """
+    🔊 Captura esdeveniments del WebSocket Stream de Twilio
+    Això ens dirà exactament què passa amb la connexió a ElevenLabs
+    """
+    try:
+        # Intentar obtenir JSON
+        data = request.get_json(force=True, silent=True) or {}
+
+        event_type = data.get('event', request.values.get('event', 'unknown'))
+        stream_sid = data.get('streamSid', request.values.get('StreamSid', ''))
+        call_sid = request.values.get('CallSid', '')
+
+        logger.info("🔊" * 40)
+        logger.info(f"🔊 STREAM EVENT REBUT: {event_type}")
+        logger.info(f"🔊 Stream SID: {stream_sid}")
+        logger.info(f"🔊 Call SID: {call_sid}")
+        logger.info(f"🔊 Data complet (JSON): {data}")
+        logger.info(f"🔊 Values complet: {dict(request.values)}")
+        logger.info(f"🔊 Headers: {dict(request.headers)}")
+        logger.info("🔊" * 40)
+
+        # Esdeveniments específics
+        if event_type == 'connected':
+            logger.info("✅ Stream WebSocket CONNECTAT a ElevenLabs!")
+        elif event_type == 'start':
+            logger.info("▶️ Stream WebSocket ha COMENÇAT!")
+            logger.info(f"▶️ Metadata: {data.get('start', {})}")
+        elif event_type == 'media':
+            # No loguegem cada paquet de media (seria massa)
+            pass
+        elif event_type == 'stop':
+            logger.warning("⏹️ Stream WebSocket ha PARAT!")
+            logger.warning(f"⏹️ Stop info: {data.get('stop', {})}")
+        elif event_type == 'closed':
+            logger.error("❌ Stream WebSocket TANCAT!")
+            logger.error(f"❌ Close info: {data}")
+        else:
+            logger.warning(f"⚠️ Event desconegut: {event_type}")
+
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        logger.exception(f"❌ Error processant stream event: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # ==========================================
