@@ -2156,9 +2156,12 @@ def elevenlabs_create_appointment():
         
         # Guardar info del client
         appointment_manager.save_customer_info(clean_phone, customer_name)
-        
-        # Crear reserva
-        result = appointment_manager.create_appointment(
+
+        # Obtenir idioma del client
+        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+
+        # ⭐ Crear reserva amb alternatives
+        result = appointment_manager.create_appointment_with_alternatives(
             phone=clean_phone,
             client_name=customer_name,
             date=date,
@@ -2166,36 +2169,73 @@ def elevenlabs_create_appointment():
             num_people=num_people,
             duration_hours=1
         )
-        
-        if result:
+
+        logger.info(f"📊 [ELEVEN LABS CREATE] Result: {result}")
+
+        # Processar el resultat segons el tipus de resposta
+        if result['success']:
+            # ✅ Reserva creada correctament
+            appointment = result['appointment']
+
             # Formatar data i hora de manera natural
             from utils.ai_processor_voice import format_date_natural, format_time_natural
-            language = appointment_manager.get_customer_language(clean_phone) or 'es'
             date_natural = format_date_natural(date, language)
             time_natural = format_time_natural(time, language)
-            
+
             messages = {
                 'es': f"Reserva confirmada para {num_people} personas el {date_natural} a las {time_natural}. ¡Nos vemos!",
                 'ca': f"Reserva confirmada per {num_people} persones el {date_natural} a les {time_natural}. Ens veiem!",
                 'en': f"Reservation confirmed for {num_people} people on {date_natural} at {time_natural}. See you!"
             }
-            
+
+            logger.info(f"✅ [ELEVEN LABS CREATE] Reserva creada amb èxit: ID {appointment['id']}")
+
             return jsonify({
                 'success': True,
                 'message': messages.get(language, messages['es'])
             }), 200
+
         else:
-            messages = {
-                'es': f"Lo siento, no hay mesas disponibles para {num_people} personas ese día a esa hora.",
-                'ca': f"Ho sento, no hi ha taules disponibles per {num_people} persones aquell dia a aquesta hora.",
-                'en': f"Sorry, no tables available for {num_people} people at that time."
-            }
-            language = appointment_manager.get_customer_language(clean_phone) or 'es'
-            
-            return jsonify({
-                'success': False,
-                'message': messages.get(language, messages['es'])
-            }), 409
+            # ❌ No hi ha disponibilitat - proposar alternatives
+            if 'alternative' in result:
+                alt = result['alternative']
+                alt_date = alt['date']
+                alt_time = alt['time']
+
+                # Formatar alternativa de manera natural
+                from utils.ai_processor_voice import format_date_natural, format_time_natural
+                alt_date_natural = format_date_natural(alt_date, language)
+                alt_time_natural = format_time_natural(alt_time, language)
+
+                messages = {
+                    'es': f"Lo siento, no hay disponibilidad el {format_date_natural(date, language)} a las {format_time_natural(time, language)}. Pero sí tenemos mesa el {alt_date_natural} a las {alt_time_natural}. ¿Te va bien esta alternativa?",
+                    'ca': f"Ho sento, no hi ha disponibilitat el {format_date_natural(date, language)} a les {format_time_natural(time, language)}. Però sí que tenim taula el {alt_date_natural} a les {alt_time_natural}. Et va bé aquesta alternativa?",
+                    'en': f"Sorry, no availability on {format_date_natural(date, language)} at {format_time_natural(time, language)}. But we have a table on {alt_date_natural} at {alt_time_natural}. Does this alternative work for you?"
+                }
+
+                logger.warning(f"⚠️ [ELEVEN LABS CREATE] No disponibilitat. Alternativa proposada: {alt_date} {alt_time}")
+
+                return jsonify({
+                    'success': False,
+                    'message': messages.get(language, messages['es']),
+                    'alternative_date': alt_date,
+                    'alternative_time': alt_time
+                }), 200  # 200 perquè l'agent processi la resposta
+
+            else:
+                # No hi ha alternatives en els propers dies
+                messages = {
+                    'es': f"Lo siento mucho, no tenemos disponibilidad para {num_people} personas en los próximos días. ¿Podrías probar con otra fecha más adelante?",
+                    'ca': f"Ho sento molt, no tenim disponibilitat per {num_people} persones en els propers dies. Pots provar amb una altra data més endavant?",
+                    'en': f"I'm very sorry, we don't have availability for {num_people} people in the coming days. Could you try another date further ahead?"
+                }
+
+                logger.warning(f"❌ [ELEVEN LABS CREATE] No hi ha disponibilitat en els propers dies")
+
+                return jsonify({
+                    'success': False,
+                    'message': messages.get(language, messages['es'])
+                }), 200  # 200 perquè l'agent processi la resposta
     
     except Exception as e:
         logger.exception(f"❌ Error en elevenlabs_create_appointment: {e}")
