@@ -434,13 +434,14 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     "type": "function",
                     "function": {
                         "name": "cancel_appointment",
-                        "description": "Cancel·lar una reserva existent",
+                        "description": "Cancel·lar una reserva existent. IMPORTANT: Primer usa list_appointments per veure les reserves del client amb les seves dates i hores, després usa aquesta funció amb la data i hora de la reserva que vol cancel·lar.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "appointment_id": {"type": "integer", "description": "ID de la reserva"}
+                                "date": {"type": "string", "description": "Data de la reserva a cancel·lar (YYYY-MM-DD)"},
+                                "time": {"type": "string", "description": "Hora de la reserva a cancel·lar (HH:MM en format 24h)"}
                             },
-                            "required": ["appointment_id"]
+                            "required": ["date", "time"]
                         }
                     }
                 },
@@ -695,23 +696,53 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         assistant_reply += f"ID: {apt_id}\n• {date} - {time_str}\n  {num_people} persones - Mesa {table_num}\n  {name} - {status}\n\n"
             
             elif function_name == "cancel_appointment":
-                apt_id = function_args.get('appointment_id')
-                success = appointment_manager.cancel_appointment(phone, apt_id)
-                
-                if success:
-                    cancel_msgs = {
-                        'es': "✅ Reserva cancelada correctamente.",
-                        'ca': "✅ Reserva cancel·lada correctament.",
-                        'en': "✅ Reservation cancelled successfully."
+                date = function_args.get('date')
+                time = function_args.get('time')
+
+                # Buscar la reserva per data i hora
+                appointments = appointment_manager.get_appointments(phone)
+
+                if not appointments:
+                    no_apt_msgs = {
+                        'es': "❌ No tienes ninguna reserva programada.",
+                        'ca': "❌ No tens cap reserva programada.",
+                        'en': "❌ You don't have any scheduled reservations."
                     }
-                    assistant_reply = cancel_msgs.get(language, cancel_msgs['es'])
+                    assistant_reply = no_apt_msgs.get(language, no_apt_msgs['es'])
                 else:
-                    error_msgs = {
-                        'es': "❌ No se pudo cancelar la reserva.",
-                        'ca': "❌ No s'ha pogut cancel·lar la reserva.",
-                        'en': "❌ Could not cancel the reservation."
-                    }
-                    assistant_reply = error_msgs.get(language, error_msgs['es'])
+                    # Buscar la reserva que coincideixi
+                    apt_id = None
+                    for apt in appointments:
+                        apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
+
+                        if str(apt_date) == date and start_time.strftime("%H:%M") == time:
+                            apt_id = apt_id_temp
+                            break
+
+                    if not apt_id:
+                        not_found_msgs = {
+                            'es': f"❌ No encuentro ninguna reserva para el {date} a las {time}.",
+                            'ca': f"❌ No trobo cap reserva pel {date} a les {time}.",
+                            'en': f"❌ I can't find any reservation for {date} at {time}."
+                        }
+                        assistant_reply = not_found_msgs.get(language, not_found_msgs['es'])
+                    else:
+                        success = appointment_manager.cancel_appointment(phone, apt_id)
+
+                        if success:
+                            cancel_msgs = {
+                                'es': f"✅ Reserva del {date} a las {time} cancelada correctamente.",
+                                'ca': f"✅ Reserva del {date} a les {time} cancel·lada correctament.",
+                                'en': f"✅ Reservation for {date} at {time} cancelled successfully."
+                            }
+                            assistant_reply = cancel_msgs.get(language, cancel_msgs['es'])
+                        else:
+                            error_msgs = {
+                                'es': "❌ No se pudo cancelar la reserva.",
+                                'ca': "❌ No s'ha pogut cancel·lar la reserva.",
+                                'en': "❌ Could not cancel the reservation."
+                            }
+                            assistant_reply = error_msgs.get(language, error_msgs['es'])
             
             elif function_name == "get_menu":
                 # Obtenir menú del restaurant (carta o menú del dia)

@@ -2269,28 +2269,58 @@ def elevenlabs_list_appointments():
             }
             return jsonify({
                 'success': True,
-                'message': messages.get(language, messages['es'])
+                'message': messages.get(language, messages['es']),
+                'appointments': []
             }), 200
-        
-        # Només la primera reserva (simplificat per veu)
-        apt = appointments[0]
-        apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
-        
+
         # Formatar de manera natural
-        from ai_processor_voice import format_date_natural, format_time_natural
-        date_natural = format_date_natural(date, language)
-        time_natural = format_time_natural(start_time, language)
-        
-        messages = {
-            'es': f"Tienes reserva el {date_natural} a las {time_natural} para {num_people} personas.",
-            'ca': f"Tens reserva el {date_natural} a les {time_natural} per {num_people} persones.",
-            'en': f"You have a reservation on {date_natural} at {time_natural} for {num_people} people."
-        }
-        
+        from utils.ai_processor_voice import format_date_natural, format_time_natural
+
+        # Preparar llista de reserves amb detalls
+        appointments_list = []
+        for apt in appointments:
+            apt_id, name, date, start_time, end_time, num_people, table_num, capacity, status = apt
+            date_natural = format_date_natural(date, language)
+            time_natural = format_time_natural(start_time, language)
+
+            appointments_list.append({
+                'id': apt_id,
+                'date': str(date),
+                'time': start_time.strftime("%H:%M"),
+                'num_people': num_people,
+                'date_natural': date_natural,
+                'time_natural': time_natural
+            })
+
+        # Construir missatge segons el nombre de reserves
+        if len(appointments) == 1:
+            apt = appointments_list[0]
+            messages = {
+                'es': f"Tienes una reserva: el {apt['date_natural']} a las {apt['time_natural']} para {apt['num_people']} personas.",
+                'ca': f"Tens una reserva: el {apt['date_natural']} a les {apt['time_natural']} per {apt['num_people']} persones.",
+                'en': f"You have one reservation: on {apt['date_natural']} at {apt['time_natural']} for {apt['num_people']} people."
+            }
+        else:
+            # Múltiples reserves
+            headers = {
+                'es': f"Tienes {len(appointments)} reservas: ",
+                'ca': f"Tens {len(appointments)} reserves: ",
+                'en': f"You have {len(appointments)} reservations: "
+            }
+            message = headers.get(language, headers['es'])
+
+            for i, apt in enumerate(appointments_list):
+                if i > 0:
+                    message += "; "
+                message += f"el {apt['date_natural']} a {'las' if language == 'es' else 'les' if language == 'ca' else ''} {apt['time_natural']} para {apt['num_people']} personas"
+
+            message += "."
+            messages = {language: message}
+
         return jsonify({
             'success': True,
             'message': messages.get(language, messages['es']),
-            'appointment_id': apt_id
+            'appointments': appointments_list  # IDs per ús intern de l'agent
         }), 200
     
     except Exception as e:
@@ -2370,33 +2400,83 @@ def elevenlabs_update_appointment():
 def elevenlabs_cancel_appointment():
     """
     Webhook cridat per Eleven Labs quan vol cancel·lar una reserva
+    Ara accepta date + time en lloc d'appointment_id per més naturalitat
     """
     try:
         data = request.json
         logger.info(f"📞 [ELEVEN LABS] cancel_appointment cridat amb: {data}")
-        
+
         phone = data.get('customer_phone', data.get('phone', ''))
-        apt_id = data.get('appointment_id')
-        
-        if not apt_id:
+        date = data.get('date')  # YYYY-MM-DD
+        time = data.get('time')  # HH:MM
+
+        if not all([phone, date, time]):
             return jsonify({
                 'success': False,
-                'message': 'Necesito el ID de la reserva.'
+                'message': 'Necesito la fecha y hora de la reserva para cancelarla.'
             }), 400
-        
+
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
-        
-        # Cancel·lar
-        success = appointment_manager.cancel_appointment(clean_phone, apt_id)
-        
-        if success:
+        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+
+        logger.info(f"🔍 [ELEVEN LABS CANCEL] Buscant reserva per {clean_phone} el {date} a les {time}")
+
+        # Buscar la reserva per data i hora
+        appointments = appointment_manager.get_appointments(clean_phone)
+
+        if not appointments:
             messages = {
-                'es': "Reserva cancelada correctamente.",
-                'ca': "Reserva cancel·lada correctament.",
-                'en': "Reservation cancelled successfully."
+                'es': "No tienes ninguna reserva programada.",
+                'ca': "No tens cap reserva programada.",
+                'en': "You don't have any scheduled reservations."
             }
-            language = appointment_manager.get_customer_language(clean_phone) or 'es'
-            
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 404
+
+        # Buscar la reserva que coincideixi amb data i hora
+        apt_id = None
+        for apt in appointments:
+            apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
+
+            # Comparar data i hora
+            if str(apt_date) == date and start_time.strftime("%H:%M") == time:
+                apt_id = apt_id_temp
+                logger.info(f"✅ [ELEVEN LABS CANCEL] Reserva trobada: ID {apt_id}")
+                break
+
+        if not apt_id:
+            from utils.ai_processor_voice import format_date_natural, format_time_natural
+            date_natural = format_date_natural(date, language)
+            time_natural = format_time_natural(time, language)
+
+            messages = {
+                'es': f"No encuentro ninguna reserva para el {date_natural} a las {time_natural}.",
+                'ca': f"No trobo cap reserva pel {date_natural} a les {time_natural}.",
+                'en': f"I can't find any reservation for {date_natural} at {time_natural}."
+            }
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 404
+
+        # Cancel·lar la reserva
+        success = appointment_manager.cancel_appointment(clean_phone, apt_id)
+
+        if success:
+            from utils.ai_processor_voice import format_date_natural, format_time_natural
+            date_natural = format_date_natural(date, language)
+            time_natural = format_time_natural(time, language)
+
+            messages = {
+                'es': f"Reserva del {date_natural} a las {time_natural} cancelada correctamente.",
+                'ca': f"Reserva del {date_natural} a les {time_natural} cancel·lada correctament.",
+                'en': f"Reservation for {date_natural} at {time_natural} cancelled successfully."
+            }
+
+            logger.info(f"✅ [ELEVEN LABS CANCEL] Reserva {apt_id} cancel·lada correctament")
+
             return jsonify({
                 'success': True,
                 'message': messages.get(language, messages['es'])
@@ -2407,13 +2487,14 @@ def elevenlabs_cancel_appointment():
                 'ca': "No s'ha pogut cancel·lar la reserva.",
                 'en': "Could not cancel the reservation."
             }
-            language = appointment_manager.get_customer_language(clean_phone) or 'es'
-            
+
+            logger.error(f"❌ [ELEVEN LABS CANCEL] Error cancel·lant reserva {apt_id}")
+
             return jsonify({
                 'success': False,
                 'message': messages.get(language, messages['es'])
             }), 400
-    
+
     except Exception as e:
         logger.exception(f"❌ Error en elevenlabs_cancel_appointment: {e}")
         return jsonify({
