@@ -410,16 +410,18 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     "type": "function",
                     "function": {
                         "name": "update_appointment",
-                        "description": "Modificar/actualitzar una reserva existent sense cancel·lar-la",
+                        "description": "Modificar/actualitzar una reserva existent. IMPORTANT: Pots identificar la reserva amb appointment_id O amb date+time. Si no tens l'ID, primer usa list_appointments per obtenir la data i hora de la reserva.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "appointment_id": {"type": "integer", "description": "ID de la reserva a modificar"},
+                                "appointment_id": {"type": "integer", "description": "ID de la reserva a modificar (opcional si proporciones date+time)"},
+                                "date": {"type": "string", "description": "Data actual de la reserva (YYYY-MM-DD) - necessari si no tens appointment_id"},
+                                "time": {"type": "string", "description": "Hora actual de la reserva (HH:MM) - necessari si no tens appointment_id"},
                                 "new_date": {"type": "string", "description": "Nova data (YYYY-MM-DD) o null si no canvia"},
                                 "new_time": {"type": "string", "description": "Nova hora (HH:MM) o null si no canvia"},
                                 "new_num_people": {"type": "integer", "description": "Nou número de persones o null si no canvia"}
                             },
-                            "required": ["appointment_id"]
+                            "required": []
                         }
                     }
                 },
@@ -644,33 +646,52 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
             
             elif function_name == "update_appointment":
                 apt_id = function_args.get('appointment_id')
+                date = function_args.get('date')
+                time = function_args.get('time')
                 new_date = function_args.get('new_date')
                 new_time = function_args.get('new_time')
                 new_num_people = function_args.get('new_num_people')
-                
-                result = appointment_manager.update_appointment(
-                    phone=phone,
-                    appointment_id=apt_id,
-                    new_date=new_date,
-                    new_time=new_time,
-                    new_num_people=new_num_people
-                )
-                
-                if result:
-                    table_info = result['table']
-                    update_msgs = {
-                        'es': f"✅ ¡Reserva actualizada!\n\n📅 Nueva fecha: {result['start'].strftime('%Y-%m-%d')}\n🕐 Nueva hora: {result['start'].strftime('%H:%M')}\n👥 Personas: {new_num_people if new_num_people else 'sin cambios'}\n🪑 Mesa: {table_info['number']}\n\n¡Te esperamos!",
-                        'ca': f"✅ Reserva actualitzada!\n\n📅 Nova data: {result['start'].strftime('%Y-%m-%d')}\n🕐 Nova hora: {result['start'].strftime('%H:%M')}\n👥 Persones: {new_num_people if new_num_people else 'sense canvis'}\n🪑 Taula: {table_info['number']}\n\nT'esperem!",
-                        'en': f"✅ Reservation updated!\n\n📅 New date: {result['start'].strftime('%Y-%m-%d')}\n🕐 New time: {result['start'].strftime('%H:%M')}\n👥 People: {new_num_people if new_num_people else 'no change'}\n🪑 Table: {table_info['number']}\n\nSee you soon!"
-                    }
-                    assistant_reply = update_msgs.get(language, update_msgs['es'])
-                else:
+
+                # Si no tenim apt_id però tenim date+time, buscar la reserva
+                if not apt_id and date and time:
+                    appointments = appointment_manager.get_appointments(phone)
+                    for apt in appointments:
+                        apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
+                        if str(apt_date) == date and start_time.strftime("%H:%M") == time:
+                            apt_id = apt_id_temp
+                            break
+
+                if not apt_id:
                     error_msgs = {
-                        'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario.",
-                        'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
-                        'en': "Sorry, couldn't update the reservation. There might not be tables available at that time."
+                        'es': "❌ No encuentro la reserva que quieres modificar. Usa list_appointments para ver tus reservas.",
+                        'ca': "❌ No trobo la reserva que vols modificar. Usa list_appointments per veure les teves reserves.",
+                        'en': "❌ I can't find the reservation you want to modify. Use list_appointments to see your reservations."
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
+                else:
+                    result = appointment_manager.update_appointment(
+                        phone=phone,
+                        appointment_id=apt_id,
+                        new_date=new_date,
+                        new_time=new_time,
+                        new_num_people=new_num_people
+                    )
+
+                    if result:
+                        table_info = result['table']
+                        update_msgs = {
+                            'es': f"✅ ¡Reserva actualizada!\n\n📅 Nueva fecha: {result['start'].strftime('%Y-%m-%d')}\n🕐 Nueva hora: {result['start'].strftime('%H:%M')}\n👥 Personas: {new_num_people if new_num_people else 'sin cambios'}\n🪑 Mesa: {table_info['number']}\n\n¡Te esperamos!",
+                            'ca': f"✅ Reserva actualitzada!\n\n📅 Nova data: {result['start'].strftime('%Y-%m-%d')}\n🕐 Nova hora: {result['start'].strftime('%H:%M')}\n👥 Persones: {new_num_people if new_num_people else 'sense canvis'}\n🪑 Taula: {table_info['number']}\n\nT'esperem!",
+                            'en': f"✅ Reservation updated!\n\n📅 New date: {result['start'].strftime('%Y-%m-%d')}\n🕐 New time: {result['start'].strftime('%H:%M')}\n👥 People: {new_num_people if new_num_people else 'no change'}\n🪑 Table: {table_info['number']}\n\nSee you soon!"
+                        }
+                        assistant_reply = update_msgs.get(language, update_msgs['es'])
+                    else:
+                        error_msgs = {
+                            'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario.",
+                            'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
+                            'en': "Sorry, couldn't update the reservation. There might not be tables available at that time."
+                        }
+                        assistant_reply = error_msgs.get(language, error_msgs['es'])
             
             elif function_name == "list_appointments":
                 appointments = appointment_manager.get_appointments(phone)

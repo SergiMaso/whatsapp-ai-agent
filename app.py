@@ -2335,26 +2335,70 @@ def elevenlabs_list_appointments():
 def elevenlabs_update_appointment():
     """
     Webhook cridat per Eleven Labs quan vol modificar una reserva
+    Ara accepta date + time per identificar la reserva a modificar
     """
     try:
         data = request.json
         logger.info(f"📞 [ELEVEN LABS] update_appointment cridat amb: {data}")
-        
+
         phone = data.get('customer_phone', data.get('phone', ''))
-        apt_id = data.get('appointment_id')
+        date = data.get('date')  # Data actual de la reserva
+        time = data.get('time')  # Hora actual de la reserva
         new_date = data.get('new_date')
         new_time = data.get('new_time')
         new_num_people = data.get('new_num_people')
-        
-        if not apt_id:
+
+        if not all([phone, date, time]):
             return jsonify({
                 'success': False,
-                'message': 'Necesito el ID de la reserva.'
+                'message': 'Necesito la fecha y hora actual de la reserva para modificarla.'
             }), 400
-        
+
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
-        
-        # Actualitzar
+        language = appointment_manager.get_customer_language(clean_phone) or 'es'
+
+        logger.info(f"🔍 [ELEVEN LABS UPDATE] Buscant reserva per {clean_phone} el {date} a les {time}")
+
+        # Buscar la reserva per data i hora
+        appointments = appointment_manager.get_appointments(clean_phone)
+
+        if not appointments:
+            messages = {
+                'es': "No tienes ninguna reserva programada.",
+                'ca': "No tens cap reserva programada.",
+                'en': "You don't have any scheduled reservations."
+            }
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 404
+
+        # Buscar la reserva que coincideixi
+        apt_id = None
+        for apt in appointments:
+            apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
+
+            if str(apt_date) == date and start_time.strftime("%H:%M") == time:
+                apt_id = apt_id_temp
+                logger.info(f"✅ [ELEVEN LABS UPDATE] Reserva trobada: ID {apt_id}")
+                break
+
+        if not apt_id:
+            from utils.ai_processor_voice import format_date_natural, format_time_natural
+            date_natural = format_date_natural(date, language)
+            time_natural = format_time_natural(time, language)
+
+            messages = {
+                'es': f"No encuentro ninguna reserva para el {date_natural} a las {time_natural}.",
+                'ca': f"No trobo cap reserva pel {date_natural} a les {time_natural}.",
+                'en': f"I can't find any reservation for {date_natural} at {time_natural}."
+            }
+            return jsonify({
+                'success': False,
+                'message': messages.get(language, messages['es'])
+            }), 404
+
+        # Actualitzar la reserva
         result = appointment_manager.update_appointment(
             phone=clean_phone,
             appointment_id=apt_id,
@@ -2362,32 +2406,47 @@ def elevenlabs_update_appointment():
             new_time=new_time,
             new_num_people=new_num_people
         )
-        
+
         if result:
+            from utils.ai_processor_voice import format_date_natural, format_time_natural
+
+            # Construir missatge segons què s'ha modificat
+            changes = []
+            if new_date:
+                changes.append(f"fecha: {format_date_natural(new_date, language)}")
+            if new_time:
+                changes.append(f"hora: {format_time_natural(new_time, language)}")
+            if new_num_people:
+                changes.append(f"personas: {new_num_people}")
+
+            changes_text = ", ".join(changes)
+
             messages = {
-                'es': "Reserva actualizada correctamente.",
-                'ca': "Reserva actualitzada correctament.",
-                'en': "Reservation updated successfully."
+                'es': f"Reserva actualizada correctamente. Cambios: {changes_text}.",
+                'ca': f"Reserva actualitzada correctament. Canvis: {changes_text}.",
+                'en': f"Reservation updated successfully. Changes: {changes_text}."
             }
-            language = appointment_manager.get_customer_language(clean_phone) or 'es'
-            
+
+            logger.info(f"✅ [ELEVEN LABS UPDATE] Reserva {apt_id} actualitzada")
+
             return jsonify({
                 'success': True,
                 'message': messages.get(language, messages['es'])
             }), 200
         else:
             messages = {
-                'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles.",
-                'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles.",
-                'en': "Could not update the reservation. There might not be tables available."
+                'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles para los nuevos datos.",
+                'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles per les noves dades.",
+                'en': "Could not update the reservation. There might not be tables available for the new data."
             }
-            language = appointment_manager.get_customer_language(clean_phone) or 'es'
-            
+
+            logger.error(f"❌ [ELEVEN LABS UPDATE] Error actualitzant reserva {apt_id}")
+
             return jsonify({
                 'success': False,
                 'message': messages.get(language, messages['es'])
             }), 409
-    
+
     except Exception as e:
         logger.exception(f"❌ Error en elevenlabs_update_appointment: {e}")
         return jsonify({
