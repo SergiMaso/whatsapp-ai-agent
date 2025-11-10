@@ -6,6 +6,7 @@ import psycopg2
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from utils.config import config
 
 load_dotenv()
 
@@ -89,11 +90,13 @@ class WeeklyDefaultsManager:
     
     def _generate_opening_hours_3_months(self, cursor):
         """
-        Generar opening_hours per als propers 3 mesos basant-se en weekly_defaults
+        Generar opening_hours per als propers mesos basant-se en weekly_defaults
         """
+        generate_days = config.get_int('generate_schedule_days_ahead', 90)
+
         try:
             today = datetime.now().date()
-            end_date = today + timedelta(days=90)  # 3 mesos
+            end_date = today + timedelta(days=generate_days)
             
             # Obtenir tots els defaults
             cursor.execute("""
@@ -148,9 +151,11 @@ class WeeklyDefaultsManager:
             
             conn = self.get_connection()
             cursor = conn.cursor()
-            
-            # 1️⃣ GENERAR: Setmana que comença 3 mesos després
-            target_date = today + timedelta(days=90)  # 3 mesos endavant
+
+            generate_days = config.get_int('generate_schedule_days_ahead', 90)
+
+            # 1️⃣ GENERAR: Setmana que comença N dies després
+            target_date = today + timedelta(days=generate_days)
             
             # Trobar el proper dilluns des de target_date
             days_until_monday = (7 - target_date.weekday()) % 7
@@ -196,9 +201,11 @@ class WeeklyDefaultsManager:
                 current_date += timedelta(days=1)
             
             print(f"✅ Generats {generated_count} dies nous")
-            
-            # 2️⃣ ELIMINAR: Setmana que va començar fa 28 dies (4 setmanes)
-            delete_date = today - timedelta(days=28)
+
+            delete_old_days = config.get_int('delete_old_data_days', 28)
+
+            # 2️⃣ ELIMINAR: Setmana que va començar fa N dies
+            delete_date = today - timedelta(days=delete_old_days)
             
             # Trobar el dilluns d'aquella setmana
             days_since_monday = delete_date.weekday()

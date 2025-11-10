@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import os
 from dotenv import load_dotenv
 import pytz  # IMPORTANT: Per gestionar timezones
+from utils.config import config
 
 load_dotenv()
 
@@ -454,7 +455,7 @@ class AppointmentManager:
     
 
 
-    def find_next_available_slot(self, requested_date, requested_time, num_people, max_days_ahead=7):
+    def find_next_available_slot(self, requested_date, requested_time, num_people, max_days_ahead=None):
         """
         Buscar el proper slot disponible a partir d'una data/hora donada
 
@@ -474,6 +475,10 @@ class AppointmentManager:
         }
         o None si no hi ha disponibilitat
         """
+        # Obtenir max_days_ahead de configuració si no s'ha especificat
+        if max_days_ahead is None:
+            max_days_ahead = config.get_int('search_window_days', 7)
+
         try:
             now = datetime.now(self.BARCELONA_TZ)
             
@@ -564,26 +569,29 @@ class AppointmentManager:
             # Convertir hora sol·licitada a minuts
             start_time_parts = start_time.split(':')
             requested_minutes = int(start_time_parts[0]) * 60 + int(start_time_parts[1])
-            
+
+            # Obtenir interval de time slots de configuració
+            time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+
             # Per cada interval d'horari
             for slot in time_slots:
                 slot_start_parts = slot['start'].split(':')
                 slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
-                
+
                 slot_end_parts = slot['end'].split(':')
                 slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
-                
-                # Generar possibles hores cada 30 minuts dins de l'interval
+
+                # Generar possibles hores cada N minuts dins de l'interval
                 # Començar des de l'hora sol·licitada o l'inici de l'interval
                 start_checking_from = max(requested_minutes, slot_start_minutes)
 
-                # Arrodonir a la propera mitja hora
-                if start_checking_from % 30 != 0:
-                    start_checking_from = ((start_checking_from // 30) + 1) * 30
+                # Arrodonir al proper interval
+                if start_checking_from % time_slot_interval != 0:
+                    start_checking_from = ((start_checking_from // time_slot_interval) + 1) * time_slot_interval
 
-                # Iterar cada 30 minuts fins l'hora de tancament (inclosa)
+                # Iterar cada N minuts fins l'hora de tancament (inclosa)
                 # L'hora de tancament és l'hora d'INICI de l'última reserva possible
-                for check_minutes in range(start_checking_from, slot_end_minutes + 1, 30):
+                for check_minutes in range(start_checking_from, slot_end_minutes + 1, time_slot_interval):
                     check_hour = check_minutes // 60
                     check_minute = check_minutes % 60
                     check_time = f"{check_hour:02d}:{check_minute:02d}"
@@ -850,7 +858,10 @@ class AppointmentManager:
 
                     print(f"📊 [CHECK] Carregades {len(daily_appointments)} reserves i {len(all_tables)} taules")
 
-                    # Generar llista de slots cada 30 minuts
+                    # Obtenir interval de time slots de configuració
+                    time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+
+                    # Generar llista de slots cada N minuts
                     available_slots = []
 
                     for slot in time_slots:
@@ -860,9 +871,9 @@ class AppointmentManager:
                         slot_end_parts = slot['end'].split(':')
                         slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
 
-                        # Generar slots cada 30 minuts fins l'hora de tancament (inclosa)
+                        # Generar slots cada N minuts fins l'hora de tancament (inclosa)
                         # L'hora de tancament és l'hora d'INICI de l'última reserva possible
-                        for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, 30):
+                        for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, time_slot_interval):
                             check_hour = check_minutes // 60
                             check_minute = check_minutes % 60
                             check_time = f"{check_hour:02d}:{check_minute:02d}"
@@ -1653,20 +1664,22 @@ class ConversationManager:
 
     def clean_old_messages(self):
         """
-        Eliminar missatges de més de 15 dies de TOTS els usuaris
+        Eliminar missatges antics de TOTS els usuaris
         NOTA: Aquesta funció només s'hauria de cridar des del scheduler, NO a cada save!
         """
+        cleanup_days = config.get_int('cleanup_messages_days', 15)
+
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("""
+                    cursor.execute(f"""
                         DELETE FROM conversations
-                        WHERE created_at < NOW() - INTERVAL '15 days'
+                        WHERE created_at < NOW() - INTERVAL '{cleanup_days} days'
                     """)
 
                     deleted_count = cursor.rowcount
                     if deleted_count > 0:
-                        print(f"🧹 Netejats {deleted_count} missatges antics (>15 dies)")
+                        print(f"🧹 Netejats {deleted_count} missatges antics (>{cleanup_days} dies)")
 
                     conn.commit()
         except Exception as e:
@@ -1685,16 +1698,20 @@ class ConversationManager:
         except Exception as e:
             print(f"❌ Error guardando mensaje: {e}")
 
-    def get_history(self, phone, limit=10):
-        """Obtenir historial de conversa NOMÉS dels últims 20 minuts"""
+    def get_history(self, phone, limit=None):
+        """Obtenir historial de conversa recent"""
+        if limit is None:
+            limit = config.get_int('conversation_history_limit', 10)
+        history_minutes = config.get_int('conversation_history_minutes', 20)
+
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("""
+                    cursor.execute(f"""
                         SELECT role, content
                         FROM conversations
                         WHERE phone = %s
-                          AND created_at > NOW() - INTERVAL '20 minutes'
+                          AND created_at > NOW() - INTERVAL '{history_minutes} minutes'
                         ORDER BY created_at DESC
                         LIMIT %s
                     """, (phone, limit))
@@ -1715,16 +1732,18 @@ class ConversationManager:
             print(f"❌ Error limpiando historial: {e}")
 
     def get_message_count(self, phone):
-        """Comptar missatges dels últims 20 minuts"""
+        """Comptar missatges recents"""
+        history_minutes = config.get_int('conversation_history_minutes', 20)
+
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("""
+                    cursor.execute(f"""
                         SELECT COUNT(*)
                         FROM conversations
                         WHERE phone = %s
                           AND role = 'user'
-                          AND created_at > NOW() - INTERVAL '20 minutes'
+                          AND created_at > NOW() - INTERVAL '{history_minutes} minutes'
                     """, (phone,))
 
                     count = cursor.fetchone()[0]

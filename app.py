@@ -2142,11 +2142,12 @@ def elevenlabs_create_appointment():
                 'success': False,
                 'message': 'Falta informació. Necessito telèfon, nom, data i hora.'
             }), 400
-        
-        if num_people < 1 or num_people > 8:
+
+        max_people = config.get_int('max_people_per_booking', 8)
+        if num_people < 1 or num_people > max_people:
             return jsonify({
                 'success': False,
-                'message': 'Solo aceptamos reservas de 1 a 8 personas.'
+                'message': f'Solo aceptamos reservas de 1 a {max_people} personas.'
             }), 400
         
         # Netejar només prefixos de plataforma (mantenir el + i els dígits)
@@ -2160,6 +2161,9 @@ def elevenlabs_create_appointment():
         # Obtenir idioma del client
         language = appointment_manager.get_customer_language(clean_phone) or 'es'
 
+        # Obtenir durada per defecte de configuració
+        default_duration = config.get_float('default_booking_duration_hours', 1.0)
+
         # ⭐ Crear reserva amb alternatives
         result = appointment_manager.create_appointment_with_alternatives(
             phone=clean_phone,
@@ -2167,7 +2171,7 @@ def elevenlabs_create_appointment():
             date=date,
             time=time,
             num_people=num_people,
-            duration_hours=1
+            duration_hours=default_duration
         )
 
         logger.info(f"📊 [ELEVEN LABS CREATE] Result: {result}")
@@ -2560,6 +2564,68 @@ def elevenlabs_cancel_appointment():
             'success': False,
             'message': 'Error cancelando la reserva.'
         }), 500
+
+
+# --------------------------------------------------------------------------
+# CLIENT CONFIGURATION ENDPOINTS
+# --------------------------------------------------------------------------
+
+from utils.config import config
+
+@app.route('/api/config', methods=['GET'])
+@login_required
+@admin_required
+def get_client_config():
+    """
+    📋 Obtenir tota la configuració del restaurant amb metadades
+    Només accessible per admin/owner
+    """
+    try:
+        configs = config.get_all_with_metadata()
+
+        logger.info(f"✅ Configuració obtinguda: {len(configs)} claus")
+
+        return jsonify(configs), 200
+
+    except Exception as e:
+        logger.error(f"❌ Error obtenint configuració: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/config/<key>', methods=['PUT'])
+@login_required
+@admin_required
+def update_client_config(key):
+    """
+    🔧 Actualitzar una clau de configuració
+    Només accessible per admin/owner
+    """
+    try:
+        data = request.json
+        new_value = data.get('value')
+
+        if new_value is None:
+            return jsonify({'error': 'El camp "value" és obligatori'}), 400
+
+        # Actualitzar configuració
+        config.set(key, new_value)
+
+        logger.info(f"✅ Configuració actualitzada: {key} = {new_value}")
+
+        return jsonify({
+            'message': 'Configuració actualitzada correctament',
+            'key': key,
+            'value': new_value
+        }), 200
+
+    except Exception as e:
+        logger.error(f"❌ Error actualitzant configuració {key}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 # --------------------------------------------------------------------------
 # MAIN
