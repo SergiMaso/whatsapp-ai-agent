@@ -319,14 +319,15 @@ def create_appointment_api():
             if field not in data:
                 return jsonify({'error': f'Camp obligatori: {field}'}), 400
         
-        # Crear reserva
+        # Crear reserva (usar configuració per defecte si no s'especifica duració)
+        default_duration = config.get_float('default_booking_duration_hours', 1.0)
         result = appointment_manager.create_appointment(
             phone=data['phone'],
             client_name=data['client_name'],
             date=data['date'],
             time=data['time'],
             num_people=data['num_people'],
-            duration_hours=data.get('duration_hours', 1)
+            duration_hours=data.get('duration_hours', default_duration)
         )
         
         if not result:
