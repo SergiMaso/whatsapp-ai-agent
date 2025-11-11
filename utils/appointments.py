@@ -759,13 +759,15 @@ class AppointmentManager:
                     'total_capacity': table[2]
                 }
 
-        # 2. Taula SENSE PAIRING amb capacitat mínima suficient
-        for table in tables_no_pairing:
-            if table[2] >= num_people:
-                return {
-                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
-                    'total_capacity': table[2]
-                }
+        # 2. Taula SENSE PAIRING amb capacitat mínima suficient (prioritzar la més petita)
+        suitable_tables = [t for t in tables_no_pairing if t[2] >= num_people]
+        if suitable_tables:
+            # Ordenar per capacitat ascendent i agafar la més petita
+            best_table = min(suitable_tables, key=lambda t: t[2])
+            return {
+                'tables': [{'id': best_table[0], 'number': best_table[1], 'capacity': best_table[2]}],
+                'total_capacity': best_table[2]
+            }
 
         # 3. Taula AMB PAIRING amb capacitat EXACTA
         for table in tables_with_pairing:
@@ -775,13 +777,15 @@ class AppointmentManager:
                     'total_capacity': table[2]
                 }
 
-        # 4. Taula AMB PAIRING amb capacitat mínima suficient
-        for table in tables_with_pairing:
-            if table[2] >= num_people:
-                return {
-                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
-                    'total_capacity': table[2]
-                }
+        # 4. Taula AMB PAIRING amb capacitat mínima suficient (prioritzar la més petita)
+        suitable_tables = [t for t in tables_with_pairing if t[2] >= num_people]
+        if suitable_tables:
+            # Ordenar per capacitat ascendent i agafar la més petita
+            best_table = min(suitable_tables, key=lambda t: t[2])
+            return {
+                'tables': [{'id': best_table[0], 'number': best_table[1], 'capacity': best_table[2]}],
+                'total_capacity': best_table[2]
+            }
 
         # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
         for table in available_tables:
@@ -1017,19 +1021,24 @@ class AppointmentManager:
 
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Crear una reserva per cada taula
+                    # Generar un booking_group_id únic per aquesta reserva
+                    cursor.execute("SELECT gen_random_uuid()")
+                    booking_group_id = cursor.fetchone()[0]
+
+                    # Crear una reserva per cada taula, totes amb el mateix booking_group_id
                     appointment_ids = []
                     for table in tables_result['tables']:
                         print(f"🕐 [TIMEZONE DEBUG] Abans d'inserir a BD:")
                         print(f"🕐 [TIMEZONE DEBUG]   - start_time que s'enviarà: {start_time} (type: {type(start_time)})")
                         print(f"🕐 [TIMEZONE DEBUG]   - end_time que s'enviarà: {end_time} (type: {type(end_time)})")
+                        print(f"🕐 [BOOKING GROUP] booking_group_id: {booking_group_id}")
 
                         cursor.execute("""
                             INSERT INTO appointments
-                            (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status, booking_group_id)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             RETURNING id, start_time, end_time
-                        """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed'))
+                        """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed', booking_group_id))
 
                         result = cursor.fetchone()
                         appointment_ids.append(result[0])
@@ -1053,6 +1062,7 @@ class AppointmentManager:
                     return {
                         'id': appointment_ids[0],  # ID principal
                         'ids': appointment_ids,
+                        'booking_group_id': str(booking_group_id),  # UUID del grup de reserves
                         'table': tables_result['tables'][0] if len(tables_result['tables']) == 1 else {
                             'number': f"{tables_result['tables'][0]['number']}+{tables_result['tables'][1]['number']}",
                             'capacity': tables_result['total_capacity'],
@@ -1207,16 +1217,46 @@ class AppointmentManager:
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s AND phone = %s", (appointment_id, phone))
-
+                    # Obtenir el booking_group_id de la reserva
                     cursor.execute("""
-                        UPDATE customers
-                        SET visit_count = GREATEST(visit_count - 1, 0)
-                        WHERE phone = %s
-                    """, (phone,))
+                        SELECT booking_group_id FROM appointments
+                        WHERE id = %s AND phone = %s AND status = 'confirmed'
+                    """, (appointment_id, phone))
+
+                    result = cursor.fetchone()
+                    if not result:
+                        return False
+
+                    booking_group_id = result[0]
+
+                    # Cancel·lar TOTES les reserves del mateix booking_group_id
+                    # Això permet cancel·lar reserves multi-taula d'un cop
+                    if booking_group_id:
+                        cursor.execute("""
+                            UPDATE appointments
+                            SET status = 'cancelled'
+                            WHERE booking_group_id = %s AND phone = %s AND status = 'confirmed'
+                        """, (booking_group_id, phone))
+                        num_cancelled = cursor.rowcount
+                        print(f"✅ Cancel·lades {num_cancelled} reserves del grup {booking_group_id}")
+                    else:
+                        # Fallback per reserves antigues sense booking_group_id
+                        cursor.execute("""
+                            UPDATE appointments
+                            SET status = 'cancelled'
+                            WHERE id = %s AND phone = %s AND status = 'confirmed'
+                        """, (appointment_id, phone))
+                        num_cancelled = cursor.rowcount
+
+                    if num_cancelled > 0:
+                        cursor.execute("""
+                            UPDATE customers
+                            SET visit_count = GREATEST(visit_count - 1, 0)
+                            WHERE phone = %s
+                        """, (phone,))
 
                     conn.commit()
-                    return True
+                    return num_cancelled > 0
         except Exception as e:
             print(f"❌ Error cancelando reserva: {e}")
             return False

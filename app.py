@@ -229,7 +229,7 @@ def get_appointments():
                 cursor.execute("""
                     SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
                            a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes, a.table_id,
-                           a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes
+                           a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes, a.booking_group_id
                     FROM appointments a
                     LEFT JOIN tables t ON a.table_id = t.id
                     ORDER BY a.start_time DESC
@@ -255,7 +255,8 @@ def get_appointments():
                         'left_at': row[14].isoformat() if row[14] else None,
                         'duration_minutes': row[15],
                         'no_show': row[16],
-                        'delay_minutes': row[17]
+                        'delay_minutes': row[17],
+                        'booking_group_id': str(row[18]) if row[18] else None
                     })
 
         return jsonify(appointments), 200
@@ -318,7 +319,47 @@ def create_appointment_api():
         for field in required:
             if field not in data:
                 return jsonify({'error': f'Camp obligatori: {field}'}), 400
-        
+
+        # Validar time slots si el mode és 'fixed'
+        time_slots_mode = config.get_str('time_slots_mode', 'interval')
+        if time_slots_mode == 'fixed':
+            # Obtenir horaris d'obertura per determinar si és lunch o dinner
+            opening_hours = appointment_manager.get_opening_hours(data['date'])
+            if not opening_hours:
+                return jsonify({'error': 'El restaurant està tancat aquest dia'}), 400
+
+            # Determinar el període (lunch/dinner) segons l'hora
+            requested_time = data['time']
+            time_parts = requested_time.split(':')
+            requested_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+
+            period = None
+            for slot in opening_hours:
+                slot_start_parts = slot['start'].split(':')
+                slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                slot_end_parts = slot['end'].split(':')
+                slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                if slot_start_minutes <= requested_minutes <= slot_end_minutes:
+                    period = slot['name']
+                    break
+
+            if not period:
+                return jsonify({'error': f'L\'hora {requested_time} està fora dels horaris d\'obertura'}), 400
+
+            # Obtenir els time slots permesos per aquest període
+            if period == 'lunch':
+                allowed_slots = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+            else:  # dinner
+                allowed_slots = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+            # Validar que l'hora sol·licitada estigui en els slots permesos
+            if requested_time not in allowed_slots:
+                slots_str = ', '.join(allowed_slots)
+                return jsonify({
+                    'error': f'L\'hora {requested_time} no està disponible. Horaris permesos per {period}: {slots_str}'
+                }), 400
+
         # Crear reserva (usar configuració per defecte si no s'especifica duració)
         default_duration = config.get_float('default_booking_duration_hours', 1.0)
         result = appointment_manager.create_appointment(
