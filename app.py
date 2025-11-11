@@ -324,9 +324,27 @@ def create_appointment_api():
         time_slots_mode = config.get_str('time_slots_mode', 'interval')
         if time_slots_mode == 'fixed':
             # Obtenir horaris d'obertura per determinar si és lunch o dinner
-            opening_hours = appointment_manager.get_opening_hours(data['date'])
-            if not opening_hours:
+            opening_hours_data = appointment_manager.get_opening_hours(data['date'])
+            if not opening_hours_data or opening_hours_data.get('status') == 'closed':
                 return jsonify({'error': 'El restaurant està tancat aquest dia'}), 400
+
+            # Convertir el format de opening_hours a llista de slots
+            time_slots = []
+            if opening_hours_data.get('lunch_start') and opening_hours_data.get('lunch_end'):
+                time_slots.append({
+                    'start': opening_hours_data['lunch_start'],
+                    'end': opening_hours_data['lunch_end'],
+                    'name': 'lunch'
+                })
+            if opening_hours_data.get('dinner_start') and opening_hours_data.get('dinner_end'):
+                time_slots.append({
+                    'start': opening_hours_data['dinner_start'],
+                    'end': opening_hours_data['dinner_end'],
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                return jsonify({'error': 'No hi ha horaris disponibles per aquest dia'}), 400
 
             # Determinar el període (lunch/dinner) segons l'hora
             requested_time = data['time']
@@ -334,7 +352,7 @@ def create_appointment_api():
             requested_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
 
             period = None
-            for slot in opening_hours:
+            for slot in time_slots:
                 slot_start_parts = slot['start'].split(':')
                 slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
                 slot_end_parts = slot['end'].split(':')
