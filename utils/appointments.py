@@ -1192,8 +1192,16 @@ class AppointmentManager:
 
                     conn.commit()
 
+                    # Crear format 'table' consistent amb create_appointment()
+                    table_display = tables_info[0] if len(tables_info) == 1 else {
+                        'number': '+'.join(str(t['number']) for t in tables_info),
+                        'capacity': sum(t['capacity'] for t in tables_info),
+                        'combined': True
+                    }
+
                     return {
                         'id': appointment_id,
+                        'table': table_display,  # Format compatible amb AI processor
                         'tables': tables_info,
                         'table_ids': final_table_ids,
                         'start': new_start,
