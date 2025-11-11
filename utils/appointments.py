@@ -325,7 +325,12 @@ class AppointmentManager:
     
     def find_combined_tables(self, start_time, end_time, num_people, exclude_appointment_id=None):
         """
-        ⚡ OPTIMITZAT: Buscar taules amb context manager (connexió sempre es retorna al pool)
+        ⚡ OPTIMITZAT: Buscar taules amb algorisme millorat
+
+        PRIORITATS:
+        1. Taula individual més petita que càpiga el grup
+        2. Si cal combinar: Mínim nombre de taules + Mínim excedent de capacitat
+
         Retorna: {'tables': [taula1, taula2, ...], 'total_capacity': X}
         """
         try:
@@ -348,127 +353,145 @@ class AppointmentManager:
 
                 occupied_ids = [row[0] for row in cursor.fetchall()]
 
-                # Obtenir taules SENSE PAIRING
+                # Obtenir TOTES les taules disponibles
                 cursor.execute("""
                     SELECT id, table_number, capacity, pairing FROM tables
-                    WHERE status = 'available' AND id NOT IN %s AND pairing IS NULL
+                    WHERE status = 'available' AND id NOT IN %s
                     ORDER BY capacity ASC, table_number
                 """, (tuple(occupied_ids) if occupied_ids else (0,),))
 
-                tables_no_pairing = cursor.fetchall()
-
-                # Obtenir taules AMB PAIRING
-                cursor.execute("""
-                    SELECT id, table_number, capacity, pairing FROM tables
-                    WHERE status = 'available' AND id NOT IN %s AND pairing IS NOT NULL
-                    ORDER BY capacity ASC, table_number
-                """, (tuple(occupied_ids) if occupied_ids else (0,),))
-
-                tables_with_pairing = cursor.fetchall()
-
+                all_tables = cursor.fetchall()
                 cursor.close()
-                # ⚡ Connexió es retorna automàticament al sortir del 'with'
-            
-            # 1. PRIORITAT MÀXIMA: Taula SENSE PAIRING amb capacitat EXACTA
-            for table in tables_no_pairing:
-                if table[2] == num_people:
-                    return {
-                        'tables': [{
-                            'id': table[0],
-                            'number': table[1],
-                            'capacity': table[2]
-                        }],
-                        'total_capacity': table[2]
-                    }
-            
-            # 2. Taula SENSE PAIRING amb capacitat mínima suficient (la més petita possible)
-            # ✅ CORRECCIÓ: Buscar la taula MÉS PETITA que sigui suficient
-            suitable_tables_no_pairing = [t for t in tables_no_pairing if t[2] >= num_people]
-            if suitable_tables_no_pairing:
-                # Ordenar per capacitat i agafar la més petita
-                best_table = min(suitable_tables_no_pairing, key=lambda t: t[2])
+
+            if not all_tables:
+                return None
+
+            # ===================================================================
+            # FASE 1: BUSCAR TAULA INDIVIDUAL (la més petita que càpiga)
+            # ===================================================================
+            suitable_single_tables = [
+                t for t in all_tables
+                if t[2] >= num_people  # capacitat >= num_people
+            ]
+
+            if suitable_single_tables:
+                # Ordenar per capacitat (més petita primer)
+                best_single = min(suitable_single_tables, key=lambda t: t[2])
+                print(f"✅ [FIND_TABLES] Taula individual trobada: #{best_single[1]} (cap. {best_single[2]} per {num_people} persones)")
                 return {
                     'tables': [{
-                        'id': best_table[0],
-                        'number': best_table[1],
-                        'capacity': best_table[2]
+                        'id': best_single[0],
+                        'number': best_single[1],
+                        'capacity': best_single[2]
                     }],
-                    'total_capacity': best_table[2]
+                    'total_capacity': best_single[2]
                 }
-            
-            # 3. Taula AMB PAIRING amb capacitat EXACTA
-            for table in tables_with_pairing:
-                if table[2] == num_people:
-                    return {
-                        'tables': [{
-                            'id': table[0],
-                            'number': table[1],
-                            'capacity': table[2]
-                        }],
-                        'total_capacity': table[2]
-                    }
-            
-            # 4. Taula AMB PAIRING amb capacitat mínima suficient (la més petita possible)
-            # ✅ CORRECCIÓ: Buscar la taula MÉS PETITA que sigui suficient
-            suitable_tables_with_pairing = [t for t in tables_with_pairing if t[2] >= num_people]
-            if suitable_tables_with_pairing:
-                # Ordenar per capacitat i agafar la més petita
-                best_table = min(suitable_tables_with_pairing, key=lambda t: t[2])
+
+            # ===================================================================
+            # FASE 2: COMBINAR TAULES (si cap taula individual és suficient)
+            # ===================================================================
+            print(f"⚠️  [FIND_TABLES] Cap taula individual per {num_people} persones, buscant combinacions...")
+
+            # Generar TOTES les combinacions possibles (fins a 4 taules)
+            from itertools import combinations
+
+            best_combination = None
+            best_score = float('inf')  # (num_tables, excess_capacity)
+
+            # Provar combinacions de 2, 3, i 4 taules
+            for combo_size in [2, 3, 4]:
+                for combo in combinations(all_tables, combo_size):
+                    # Comprovar si aquesta combinació és vàlida (pairing)
+                    if not self._is_valid_combination(combo):
+                        continue
+
+                    # Calcular capacitat total
+                    total_capacity = sum(t[2] for t in combo)
+
+                    # Si no és suficient, descartar
+                    if total_capacity < num_people:
+                        continue
+
+                    # Calcular excedent
+                    excess = total_capacity - num_people
+
+                    # Calcular score: prioritzar mínim nombre de taules, després mínim excedent
+                    score = (combo_size, excess)
+
+                    # Si és millor, guardar
+                    if score < best_score:
+                        best_score = score
+                        best_combination = combo
+
+            # Si hem trobat una combinació, retornar-la
+            if best_combination:
+                tables_list = [
+                    {'id': t[0], 'number': t[1], 'capacity': t[2]}
+                    for t in best_combination
+                ]
+                total_cap = sum(t[2] for t in best_combination)
+                excess = total_cap - num_people
+
+                table_numbers = '+'.join(str(t['number']) for t in tables_list)
+                print(f"✅ [FIND_TABLES] Combinació trobada: Taules {table_numbers} ({len(tables_list)} taules, cap. {total_cap}, excedent: {excess})")
+
                 return {
-                    'tables': [{
-                        'id': best_table[0],
-                        'number': best_table[1],
-                        'capacity': best_table[2]
-                    }],
-                    'total_capacity': best_table[2]
+                    'tables': tables_list,
+                    'total_capacity': total_cap
                 }
-            
-            # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
-            all_tables = tables_no_pairing + tables_with_pairing
-            for table in all_tables:
-                table_id, table_num, capacity, pairing = table
-                
-                if not pairing:
-                    continue
-                
-                # Buscar taules del pairing que estiguin disponibles
-                paired_tables = []
-                total_cap = capacity
-                
-                for paired_num in pairing:
-                    # Buscar si la taula paired està disponible
-                    paired_table = next(
-                        (t for t in all_tables if t[1] == paired_num),
-                        None
-                    )
-                    
-                    if paired_table:
-                        paired_tables.append({
-                            'id': paired_table[0],
-                            'number': paired_table[1],
-                            'capacity': paired_table[2]
-                        })
-                        total_cap += paired_table[2]
-                        
-                        # Si ja tenim prou capacitat, retornar
-                        if total_cap >= num_people:
-                            return {
-                                'tables': [{
-                                    'id': table_id,
-                                    'number': table_num,
-                                    'capacity': capacity
-                                }] + paired_tables,
-                                'total_capacity': total_cap
-                            }
-            
-            # No s'ha trobat cap taula disponible
+
+            # No s'ha trobat cap solució
+            print(f"❌ [FIND_TABLES] No s'ha trobat cap taula o combinació per {num_people} persones")
             return None
-            
+
         except Exception as e:
             print(f"❌ Error buscant taules combinades: {e}")
             import traceback
             traceback.print_exc()
             return None
+
+    def _is_valid_combination(self, tables_combo):
+        """
+        Verifica si una combinació de taules és vàlida segons els pairings
+
+        Regla: Les taules d'una combinació han d'estar relacionades per pairing
+        """
+        # Si només hi ha 1 taula, sempre és vàlid
+        if len(tables_combo) == 1:
+            return True
+
+        # Convertir a diccionari per accés ràpid
+        tables_dict = {t[1]: t for t in tables_combo}  # table_number -> table
+        table_numbers = set(tables_dict.keys())
+
+        # Comprovar que totes les taules estan connectades per pairing
+        # Algoritme: començar per la primera taula i expandir per pairings
+        visited = set()
+        to_visit = [tables_combo[0][1]]  # table_number
+
+        while to_visit:
+            current_num = to_visit.pop(0)
+            if current_num in visited:
+                continue
+
+            visited.add(current_num)
+
+            # Obtenir pairing d'aquesta taula
+            current_table = tables_dict.get(current_num)
+            if current_table and current_table[3]:  # pairing no és NULL
+                pairing_list = current_table[3]
+                for paired_num in pairing_list:
+                    if paired_num in table_numbers and paired_num not in visited:
+                        to_visit.append(paired_num)
+
+        # Si hem visitat totes les taules de la combinació, és vàlida
+        is_valid = len(visited) == len(tables_combo)
+
+        if not is_valid:
+            table_nums = '+'.join(str(t[1]) for t in tables_combo)
+            print(f"⚠️  [PAIRING] Combinació {table_nums} descartada (no estan connectades per pairing)")
+
+        return is_valid
     
 
 
