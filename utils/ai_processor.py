@@ -8,6 +8,7 @@ import re
 from unidecode import unidecode
 from utils.appointments import AppointmentManager, ConversationManager
 from utils.media_manager import MediaManager
+from utils.config import config
 load_dotenv()
 
 # Cache d'idiomes en memòria per evitar canvis inesperats quan BD falla
@@ -257,8 +258,12 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         appointment_context = apt_contexts.get(language, apt_contexts['es'])
     
     # STEP 8: Construir system prompts per cada idioma
+    # Obtenir configuració dinàmica
+    restaurant_name = config.get_str('restaurant_name', 'Amaru')
+    max_people = config.get_int('max_people_per_booking', 8)
+
     system_prompts = {
-        'ca': f"""Ets un gestor de reserves virtual del restaurant Amaru. Només pots respondre preguntes relacionades amb la teva funció de gestió de reserves.
+        'ca': f"""Ets un gestor de reserves virtual del restaurant {restaurant_name}. Només pots respondre preguntes relacionades amb la teva funció de gestió de reserves.
 
 DATA ACTUAL: Avui és {day_name} {today_str}.
 
@@ -266,7 +271,7 @@ DATA ACTUAL: Avui és {day_name} {today_str}.
 
 INFORMACIÓ DEL RESTAURANT:
 - Capacitat: 12 taules de 4 persones i 5 taules de 2 persones
-- MÀXIM 8 persones per reserva (el sistema combina taules automàticament si cal)
+- MÀXIM {max_people} persones per reserva (el sistema combina taules automàticament si cal)
 - Horaris:
   * Dinar: 12:00 a 15:00
   * Sopar: 19:00 a 22:30
@@ -297,7 +302,7 @@ Sigues càlid, professional i proper.
 
 IMPORTANT: No contestis mai temes no relacionats amb les reserves del restaurant.""",
         
-        'es': f"""Eres un gestor de reservas virtual del restaurante Amaru. Solo puedes responder preguntas relacionadas con tu función de gestión de reservas.
+        'es': f"""Eres un gestor de reservas virtual del restaurante {restaurant_name}. Solo puedes responder preguntas relacionadas con tu función de gestión de reservas.
 
 FECHA ACTUAL: Hoy es {day_name} {today_str}.
 
@@ -305,7 +310,7 @@ FECHA ACTUAL: Hoy es {day_name} {today_str}.
 
 INFORMACIÓN DEL RESTAURANTE:
 - Capacidad: 12 mesas de 4 personas y 5 mesas de 2 personas
-- MÁXIMO 8 personas por reserva (el sistema combina mesas automáticamente si es necesario)
+- MÁXIMO {max_people} personas por reserva (el sistema combina mesas automáticamente si es necesario)
 - Horarios:
   * Comida: 12:00 a 15:00
   * Cena: 19:00 a 22:30
@@ -336,7 +341,7 @@ Sé cálido, profesional y cercano.
 
 IMPORTANTE: No contestes nunca temas no relacionados con las reservas del restaurante.""",
         
-        'en': f"""You are a virtual reservation manager for Amaru restaurant. You can only answer questions related to your reservation management function.
+        'en': f"""You are a virtual reservation manager for {restaurant_name} restaurant. You can only answer questions related to your reservation management function.
 
 CURRENT DATE: Today is {day_name} {today_str}.
 
@@ -344,7 +349,7 @@ CURRENT DATE: Today is {day_name} {today_str}.
 
 RESTAURANT INFORMATION:
 - Capacity: 12 tables for 4 people and 5 tables for 2 people
-- MAXIMUM 8 people per reservation (system automatically combines tables if needed)
+- MAXIMUM {max_people} people per reservation (system automatically combines tables if needed)
 - Hours:
   * Lunch: 12:00 to 15:00
   * Dinner: 19:00 to 22:30
@@ -497,18 +502,20 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
             
             if function_name == "create_appointment":
                 num_people = function_args.get('num_people', 2)
-                
-                if num_people < 1 or num_people > 8:
+                max_people = config.get_int('max_people_per_booking', 8)
+                default_duration = config.get_float('default_booking_duration_hours', 1.0)
+
+                if num_people < 1 or num_people > max_people:
                     error_msgs = {
-                        'es': "Lo siento, solo aceptamos reservas de 1 a 8 personas.",
-                        'ca': "Ho sento, només acceptem reserves d'1 a 8 persones.",
-                        'en': "Sorry, we only accept reservations for 1 to 8 people."
+                        'es': f"Lo siento, solo aceptamos reservas de 1 a {max_people} personas.",
+                        'ca': f"Ho sento, només acceptem reserves d'1 a {max_people} persones.",
+                        'en': f"Sorry, we only accept reservations for 1 to {max_people} people."
                     }
                     return error_msgs.get(language, error_msgs['es'])
-                
+
                 # IMPORTANT: Guardar nom del client
                 appointment_manager.save_customer_info(phone, function_args.get('client_name'))
-                
+
                 # NOVA CRIDA AMB VALIDACIONS I ALTERNATIVES
                 result = appointment_manager.create_appointment_with_alternatives(
                     phone=phone,
@@ -516,7 +523,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     date=function_args.get('date'),
                     time=function_args.get('time'),
                     num_people=num_people,
-                    duration_hours=1
+                    duration_hours=default_duration
                 )
                 
                 if result['success']:
