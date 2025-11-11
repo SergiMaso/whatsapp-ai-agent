@@ -424,7 +424,8 @@ def create_appointment_api():
             date=data['date'],
             time=data['time'],
             num_people=data['num_people'],
-            duration_hours=data.get('duration_hours', default_duration)
+            duration_hours=data.get('duration_hours', default_duration),
+            language=data.get('language', 'es')
         )
         
         if not result:
