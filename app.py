@@ -225,18 +225,35 @@ def get_appointments():
                 # Configurar timezone per la sessió
                 cursor.execute("SET timezone TO 'Europe/Madrid'")
 
-                # Obtenir reserves amb informació de taula i notes
+                # Obtenir reserves amb informació de taules i notes
                 cursor.execute("""
                     SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
-                           a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes, a.table_id,
+                           a.num_people, a.status, a.table_ids, a.created_at, a.notes,
                            a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes, a.booking_group_id
                     FROM appointments a
-                    LEFT JOIN tables t ON a.table_id = t.id
                     ORDER BY a.start_time DESC
                 """)
 
                 appointments = []
                 for row in cursor.fetchall():
+                    table_ids = row[8]
+
+                    # Obtenir informació de les taules
+                    if table_ids:
+                        cursor.execute("""
+                            SELECT table_number, capacity
+                            FROM tables
+                            WHERE id = ANY(%s)
+                            ORDER BY table_number
+                        """, (table_ids,))
+                        tables_info = cursor.fetchall()
+
+                        table_numbers = '+'.join(str(t[0]) for t in tables_info) if tables_info else 'N/A'
+                        total_capacity = sum(t[1] for t in tables_info) if tables_info else 0
+                    else:
+                        table_numbers = 'N/A'
+                        total_capacity = 0
+
                     appointments.append({
                         'id': row[0],
                         'phone': row[1],
@@ -246,17 +263,17 @@ def get_appointments():
                         'end_time': row[5].isoformat() if row[5] else None,
                         'num_people': row[6],
                         'status': row[7],
-                        'table_number': row[8],
-                        'table_capacity': row[9],
-                        'created_at': row[10].isoformat() if row[10] else None,
-                        'notes': row[11],
-                        'table_id': row[12],
-                        'seated_at': row[13].isoformat() if row[13] else None,
-                        'left_at': row[14].isoformat() if row[14] else None,
-                        'duration_minutes': row[15],
-                        'no_show': row[16],
-                        'delay_minutes': row[17],
-                        'booking_group_id': str(row[18]) if row[18] else None
+                        'table_numbers': table_numbers,
+                        'table_capacity': total_capacity,
+                        'created_at': row[9].isoformat() if row[9] else None,
+                        'notes': row[10],
+                        'table_ids': table_ids,
+                        'seated_at': row[11].isoformat() if row[11] else None,
+                        'left_at': row[12].isoformat() if row[12] else None,
+                        'duration_minutes': row[13],
+                        'no_show': row[14],
+                        'delay_minutes': row[15],
+                        'booking_group_id': str(row[16]) if row[16] else None
                     })
 
         return jsonify(appointments), 200
@@ -274,20 +291,40 @@ def get_appointment(appointment_id):
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time, 
-                   a.num_people, a.status, t.table_number, t.capacity
+            SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
+                   a.num_people, a.status, a.table_ids
             FROM appointments a
-            LEFT JOIN tables t ON a.table_id = t.id
             WHERE a.id = %s
         """, (appointment_id,))
-        
+
         row = cursor.fetchone()
+
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Reserva no trobada'}), 404
+
+        table_ids = row[8]
+
+        # Obtenir informació de les taules
+        if table_ids:
+            cursor.execute("""
+                SELECT table_number, capacity
+                FROM tables
+                WHERE id = ANY(%s)
+                ORDER BY table_number
+            """, (table_ids,))
+            tables_info = cursor.fetchall()
+
+            table_numbers = '+'.join(str(t[0]) for t in tables_info) if tables_info else 'N/A'
+            total_capacity = sum(t[1] for t in tables_info) if tables_info else 0
+        else:
+            table_numbers = 'N/A'
+            total_capacity = 0
+
         cursor.close()
         conn.close()
-        
-        if not row:
-            return jsonify({'error': 'Reserva no trobada'}), 404
-        
+
         appointment = {
             'id': row[0],
             'phone': row[1],
@@ -297,8 +334,9 @@ def get_appointment(appointment_id):
             'end_time': row[5].isoformat() if row[5] else None,
             'num_people': row[6],
             'status': row[7],
-            'table_number': row[8],
-            'table_capacity': row[9]
+            'table_numbers': table_numbers,
+            'table_capacity': total_capacity,
+            'table_ids': table_ids
         }
         
         return jsonify(appointment), 200
@@ -420,14 +458,14 @@ def update_appointment_api(appointment_id):
 
         phone = row[0]
 
-        # Actualitzar (ara incloent table_id)
+        # Actualitzar (ara incloent table_ids)
         result = appointment_manager.update_appointment(
             phone=phone,
             appointment_id=appointment_id,
             new_date=data.get('date'),
             new_time=data.get('time'),
             new_num_people=data.get('num_people'),
-            new_table_id=data.get('table_id')
+            new_table_ids=data.get('table_ids')  # Array d'IDs de taules
         )
 
         if not result:
@@ -436,7 +474,8 @@ def update_appointment_api(appointment_id):
         return jsonify({
             'message': 'Reserva actualitzada correctament',
             'appointment_id': result['id'],
-            'table': result['table']
+            'tables': result.get('tables', []),
+            'table_ids': result.get('table_ids', [])
         }), 200
 
     except Exception as e:
@@ -726,10 +765,10 @@ def delete_table(table_id):
         table_number = result[0]
         pairing = result[1] if result[1] else []
         
-        # Verificar reserves futures
+        # Verificar reserves futures (ara amb table_ids array)
         cursor.execute("""
             SELECT COUNT(*) FROM appointments
-            WHERE table_id = %s AND status = 'confirmed' AND date >= CURRENT_DATE
+            WHERE %s = ANY(table_ids) AND status = 'confirmed' AND date >= CURRENT_DATE
         """, (table_id,))
         
         count = cursor.fetchone()[0]

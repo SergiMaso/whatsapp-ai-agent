@@ -106,12 +106,13 @@ class AppointmentManager:
                             start_time TIMESTAMPTZ NOT NULL,
                             end_time TIMESTAMPTZ NOT NULL,
                             num_people INTEGER NOT NULL,
-                            table_id INTEGER REFERENCES tables(id),
+                            table_ids INTEGER[],
                             language VARCHAR(10),
                             notes TEXT,
                             status VARCHAR(20) DEFAULT 'confirmed',
                             reminder_sent BOOLEAN DEFAULT FALSE,
-                            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                            booking_group_id UUID
                         )
                     """)
 
@@ -169,6 +170,26 @@ class AppointmentManager:
                     if not cursor.fetchone():
                         cursor.execute("ALTER TABLE appointments ADD COLUMN delay_minutes INTEGER")
                         print("✅ Columna delay_minutes afegida a appointments")
+                        conn.commit()
+
+                    # Afegir columna table_ids si no existeix (migració de table_id a table_ids)
+                    cursor.execute("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name='appointments' AND column_name='table_ids'
+                    """)
+                    if not cursor.fetchone():
+                        cursor.execute("ALTER TABLE appointments ADD COLUMN table_ids INTEGER[]")
+                        print("✅ Columna table_ids afegida a appointments")
+                        conn.commit()
+
+                    # Afegir columna booking_group_id si no existeix
+                    cursor.execute("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name='appointments' AND column_name='booking_group_id'
+                    """)
+                    if not cursor.fetchone():
+                        cursor.execute("ALTER TABLE appointments ADD COLUMN booking_group_id UUID")
+                        print("✅ Columna booking_group_id afegida a appointments")
                         conn.commit()
 
                     cursor.execute("""
@@ -271,13 +292,13 @@ class AppointmentManager:
 
                     if exclude_appointment_id:
                         cursor.execute("""
-                            SELECT table_id FROM appointments
+                            SELECT UNNEST(table_ids) FROM appointments
                             WHERE status = 'confirmed' AND id != %s
                               AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
                         """, (exclude_appointment_id, end_time, start_time, start_time, end_time))
                     else:
                         cursor.execute("""
-                            SELECT table_id FROM appointments
+                            SELECT UNNEST(table_ids) FROM appointments
                             WHERE status = 'confirmed'
                               AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
                         """, (end_time, start_time, start_time, end_time))
@@ -314,13 +335,13 @@ class AppointmentManager:
                 # Obtenir taules ocupades en aquest horari
                 if exclude_appointment_id:
                     cursor.execute("""
-                        SELECT table_id FROM appointments
+                        SELECT UNNEST(table_ids) FROM appointments
                         WHERE status = 'confirmed' AND id != %s
                           AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
                     """, (exclude_appointment_id, end_time, start_time, start_time, end_time))
                 else:
                     cursor.execute("""
-                        SELECT table_id FROM appointments
+                        SELECT UNNEST(table_ids) FROM appointments
                         WHERE status = 'confirmed'
                           AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
                     """, (end_time, start_time, start_time, end_time))
@@ -871,7 +892,7 @@ class AppointmentManager:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        SELECT table_id, start_time, end_time
+                        SELECT table_ids, start_time, end_time
                         FROM appointments
                         WHERE date = %s AND status = 'confirmed'
                     """, (date,))
@@ -945,10 +966,13 @@ class AppointmentManager:
                         # ⚡ OPTIMITZACIÓ: Calcular taules ocupades EN MEMÒRIA
                         end_datetime = check_datetime + timedelta(hours=1)
 
-                        occupied_ids = {
-                            apt[0] for apt in daily_appointments
-                            if apt[1] < end_datetime and apt[2] > check_datetime
-                        }
+                        # apt[0] ara és un array de table_ids, així que cal aplanar-lo
+                        occupied_ids = set()
+                        for apt in daily_appointments:
+                            if apt[1] < end_datetime and apt[2] > check_datetime:
+                                # apt[0] és table_ids (array), afegir tots els IDs
+                                if apt[0]:  # Comprovar que no sigui None
+                                    occupied_ids.update(apt[0])
 
                         # ⚡ OPTIMITZACIÓ: Buscar taules disponibles EN MEMÒRIA (sense queries)
                         tables_result = self._find_tables_in_memory(all_tables, occupied_ids, num_people)
@@ -1023,32 +1047,34 @@ class AppointmentManager:
 
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Generar un booking_group_id únic per aquesta reserva
+                    # Generar un booking_group_id únic per aquesta reserva (per compatibilitat)
                     cursor.execute("SELECT gen_random_uuid()")
                     booking_group_id = cursor.fetchone()[0]
 
-                    # Crear una reserva per cada taula, totes amb el mateix booking_group_id
-                    appointment_ids = []
-                    for table in tables_result['tables']:
-                        print(f"🕐 [TIMEZONE DEBUG] Abans d'inserir a BD:")
-                        print(f"🕐 [TIMEZONE DEBUG]   - start_time que s'enviarà: {start_time} (type: {type(start_time)})")
-                        print(f"🕐 [TIMEZONE DEBUG]   - end_time que s'enviarà: {end_time} (type: {type(end_time)})")
-                        print(f"🕐 [BOOKING GROUP] booking_group_id: {booking_group_id}")
+                    # Obtenir els IDs de totes les taules
+                    table_ids = [table['id'] for table in tables_result['tables']]
 
-                        cursor.execute("""
-                            INSERT INTO appointments
-                            (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status, booking_group_id)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            RETURNING id, start_time, end_time
-                        """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed', booking_group_id))
+                    print(f"🕐 [TIMEZONE DEBUG] Abans d'inserir a BD:")
+                    print(f"🕐 [TIMEZONE DEBUG]   - start_time que s'enviarà: {start_time} (type: {type(start_time)})")
+                    print(f"🕐 [TIMEZONE DEBUG]   - end_time que s'enviarà: {end_time} (type: {type(end_time)})")
+                    print(f"🕐 [BOOKING GROUP] booking_group_id: {booking_group_id}")
+                    print(f"🪑 [TABLES] table_ids: {table_ids}")
 
-                        result = cursor.fetchone()
-                        appointment_ids.append(result[0])
+                    # Crear UNA SOLA reserva amb totes les taules
+                    cursor.execute("""
+                        INSERT INTO appointments
+                        (phone, client_name, date, start_time, end_time, num_people, table_ids, language, notes, status, booking_group_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id, start_time, end_time
+                    """, (phone, client_name, date_only, start_time, end_time, num_people, table_ids, customer_language, notes, 'confirmed', booking_group_id))
 
-                        print(f"🕐 [TIMEZONE DEBUG] Després d'inserir (retornat per BD):")
-                        print(f"🕐 [TIMEZONE DEBUG]   - ID: {result[0]}")
-                        print(f"🕐 [TIMEZONE DEBUG]   - start_time desde BD: {result[1]}")
-                        print(f"🕐 [TIMEZONE DEBUG]   - end_time desde BD: {result[2]}")
+                    result = cursor.fetchone()
+                    appointment_id = result[0]
+
+                    print(f"🕐 [TIMEZONE DEBUG] Després d'inserir (retornat per BD):")
+                    print(f"🕐 [TIMEZONE DEBUG]   - ID: {result[0]}")
+                    print(f"🕐 [TIMEZONE DEBUG]   - start_time desde BD: {result[1]}")
+                    print(f"🕐 [TIMEZONE DEBUG]   - end_time desde BD: {result[2]}")
 
                     # Incrementar visit_count del client
                     cursor.execute("""
@@ -1057,20 +1083,20 @@ class AppointmentManager:
                         WHERE phone = %s
                     """, (phone,))
 
-                    print(f"✅ Reserva creada: IDs={appointment_ids} - {len(tables_result['tables'])} taules")
+                    print(f"✅ Reserva creada: ID={appointment_id} - {len(tables_result['tables'])} taules")
 
                     conn.commit()
 
                     return {
-                        'id': appointment_ids[0],  # ID principal
-                        'ids': appointment_ids,
-                        'booking_group_id': str(booking_group_id),  # UUID del grup de reserves
+                        'id': appointment_id,  # ID únic de la reserva
+                        'booking_group_id': str(booking_group_id),  # UUID del grup (per compatibilitat)
                         'table': tables_result['tables'][0] if len(tables_result['tables']) == 1 else {
                             'number': f"{tables_result['tables'][0]['number']}+{tables_result['tables'][1]['number']}",
                             'capacity': tables_result['total_capacity'],
                             'combined': True
                         },
                         'tables': tables_result['tables'],
+                        'table_ids': table_ids,
                         'start': start_time,
                         'end': end_time
                     }
@@ -1081,12 +1107,12 @@ class AppointmentManager:
             traceback.print_exc()
             return None
     
-    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_table_id=None):
+    def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_table_ids=None):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        SELECT start_time, end_time, num_people, table_id FROM appointments
+                        SELECT start_time, end_time, num_people, table_ids FROM appointments
                         WHERE id = %s AND phone = %s AND status = 'confirmed'
                     """, (appointment_id, phone))
 
@@ -1094,7 +1120,7 @@ class AppointmentManager:
                     if not result:
                         return None
 
-                    current_start, current_end, current_num_people, current_table_id = result
+                    current_start, current_end, current_num_people, current_table_ids = result
 
                     if new_date or new_time:
                         date_part = new_date if new_date else current_start.strftime("%Y-%m-%d")
@@ -1120,45 +1146,59 @@ class AppointmentManager:
 
                     final_num_people = new_num_people if new_num_people else current_num_people
 
-                    if new_table_id is not None:
-                        cursor.execute("""
-                            SELECT id, table_number, capacity, status FROM tables
-                            WHERE id = %s
-                        """, (new_table_id,))
-                        table_row = cursor.fetchone()
-
-                        if not table_row:
+                    # Si no es proporcionen taules noves, buscar taules adequades per al nombre de persones
+                    if new_table_ids is None:
+                        # Buscar taules (individuals o combinades) que s'ajustin al nombre de persones
+                        tables_result = self.find_combined_tables(new_start, new_end, final_num_people, exclude_appointment_id=appointment_id)
+                        if not tables_result:
                             return None
 
-                        if table_row[3] != 'available':
-                            return None
-
-                        cursor.execute("""
-                            SELECT id FROM appointments
-                            WHERE table_id = %s
-                              AND status = 'confirmed'
-                              AND id != %s
-                              AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
-                        """, (new_table_id, appointment_id, new_end, new_start, new_start, new_end))
-
-                        if cursor.fetchone():
-                            return None
-
-                        table = {'id': table_row[0], 'number': table_row[1], 'capacity': table_row[2]}
+                        final_table_ids = [table['id'] for table in tables_result['tables']]
+                        tables_info = tables_result['tables']
                     else:
-                        table = self.find_available_table(new_start, new_end, final_num_people, exclude_appointment_id=appointment_id)
-                        if not table:
-                            return None
+                        # Validar que les taules proporcionades estiguin disponibles
+                        final_table_ids = new_table_ids
+                        tables_info = []
+
+                        for tid in final_table_ids:
+                            cursor.execute("""
+                                SELECT id, table_number, capacity, status FROM tables
+                                WHERE id = %s
+                            """, (tid,))
+                            table_row = cursor.fetchone()
+
+                            if not table_row or table_row[3] != 'available':
+                                return None
+
+                            # Comprovar que la taula no estigui ocupada en el nou horari
+                            cursor.execute("""
+                                SELECT id FROM appointments
+                                WHERE %s = ANY(table_ids)
+                                  AND status = 'confirmed'
+                                  AND id != %s
+                                  AND ((start_time < %s AND end_time > %s) OR (start_time >= %s AND start_time < %s))
+                            """, (tid, appointment_id, new_end, new_start, new_start, new_end))
+
+                            if cursor.fetchone():
+                                return None
+
+                            tables_info.append({'id': table_row[0], 'number': table_row[1], 'capacity': table_row[2]})
 
                     cursor.execute("""
                         UPDATE appointments
-                        SET date = %s, start_time = %s, end_time = %s, num_people = %s, table_id = %s
+                        SET date = %s, start_time = %s, end_time = %s, num_people = %s, table_ids = %s
                         WHERE id = %s AND phone = %s
-                    """, (new_date_only, new_start, new_end, final_num_people, table['id'], appointment_id, phone))
+                    """, (new_date_only, new_start, new_end, final_num_people, final_table_ids, appointment_id, phone))
 
                     conn.commit()
 
-                    return {'id': appointment_id, 'table': table, 'start': new_start, 'end': new_end}
+                    return {
+                        'id': appointment_id,
+                        'tables': tables_info,
+                        'table_ids': final_table_ids,
+                        'start': new_start,
+                        'end': new_end
+                    }
 
         except Exception as e:
             print(f"❌ Error actualizando reserva: {e}")
@@ -1173,20 +1213,48 @@ class AppointmentManager:
                     if from_date is None:
                         from_date = datetime.now().date()
 
+                    # Obtenir reserves amb els seus table_ids
                     cursor.execute("""
                         SELECT a.id, a.client_name, a.date, a.start_time, a.end_time, a.num_people,
-                               t.table_number, t.capacity, a.status
+                               a.table_ids, a.status
                         FROM appointments a
-                        JOIN tables t ON a.table_id = t.id
                         WHERE a.phone = %s AND a.date >= %s AND a.status = 'confirmed'
                         ORDER BY a.start_time
                     """, (phone, from_date))
 
                     appointments = cursor.fetchall()
-                    return appointments
+
+                    # Afegir informació de les taules per a cada reserva
+                    result = []
+                    for apt in appointments:
+                        apt_id, client_name, date, start_time, end_time, num_people, table_ids, status = apt
+
+                        # Obtenir els números de taula
+                        if table_ids:
+                            cursor.execute("""
+                                SELECT table_number, capacity
+                                FROM tables
+                                WHERE id = ANY(%s)
+                                ORDER BY table_number
+                            """, (table_ids,))
+                            tables_info = cursor.fetchall()
+
+                            # Crear string amb números de taula (ex: "5+6")
+                            table_numbers = '+'.join(str(t[0]) for t in tables_info)
+                            total_capacity = sum(t[1] for t in tables_info)
+                        else:
+                            table_numbers = 'N/A'
+                            total_capacity = 0
+
+                        result.append((apt_id, client_name, date, start_time, end_time, num_people,
+                                     table_numbers, total_capacity, status))
+
+                    return result
 
         except Exception as e:
             print(f"❌ Error obteniendo reservas: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_latest_appointment(self, phone):
@@ -1219,38 +1287,19 @@ class AppointmentManager:
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Obtenir el booking_group_id de la reserva
+                    # Cancel·lar la reserva directament per ID
+                    # (Ara cada reserva és una sola fila, encara que tingui múltiples taules)
                     cursor.execute("""
-                        SELECT booking_group_id FROM appointments
+                        UPDATE appointments
+                        SET status = 'cancelled'
                         WHERE id = %s AND phone = %s AND status = 'confirmed'
                     """, (appointment_id, phone))
 
-                    result = cursor.fetchone()
-                    if not result:
-                        return False
-
-                    booking_group_id = result[0]
-
-                    # Cancel·lar TOTES les reserves del mateix booking_group_id
-                    # Això permet cancel·lar reserves multi-taula d'un cop
-                    if booking_group_id:
-                        cursor.execute("""
-                            UPDATE appointments
-                            SET status = 'cancelled'
-                            WHERE booking_group_id = %s AND phone = %s AND status = 'confirmed'
-                        """, (booking_group_id, phone))
-                        num_cancelled = cursor.rowcount
-                        print(f"✅ Cancel·lades {num_cancelled} reserves del grup {booking_group_id}")
-                    else:
-                        # Fallback per reserves antigues sense booking_group_id
-                        cursor.execute("""
-                            UPDATE appointments
-                            SET status = 'cancelled'
-                            WHERE id = %s AND phone = %s AND status = 'confirmed'
-                        """, (appointment_id, phone))
-                        num_cancelled = cursor.rowcount
+                    num_cancelled = cursor.rowcount
 
                     if num_cancelled > 0:
+                        print(f"✅ Cancel·lada reserva {appointment_id}")
+
                         cursor.execute("""
                             UPDATE customers
                             SET visit_count = GREATEST(visit_count - 1, 0)
