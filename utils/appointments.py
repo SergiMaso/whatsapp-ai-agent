@@ -284,25 +284,15 @@ class AppointmentManager:
 
                     reserved_ids = [row[0] for row in cursor.fetchall()]
 
-                    if num_people <= 2:
-                        cursor.execute("""
-                            SELECT id, table_number, capacity FROM tables
-                            WHERE capacity = 2 AND status = 'available' AND id NOT IN %s ORDER BY table_number LIMIT 1
-                        """, (tuple(reserved_ids) if reserved_ids else (0,),))
-                        result = cursor.fetchone()
-
-                        if not result:
-                            cursor.execute("""
-                                SELECT id, table_number, capacity FROM tables
-                                WHERE capacity = 4 AND status = 'available' AND id NOT IN %s ORDER BY table_number LIMIT 1
-                            """, (tuple(reserved_ids) if reserved_ids else (0,),))
-                            result = cursor.fetchone()
-                    else:
-                        cursor.execute("""
-                            SELECT id, table_number, capacity FROM tables
-                            WHERE capacity >= %s AND status = 'available' AND id NOT IN %s ORDER BY capacity, table_number LIMIT 1
-                        """, (num_people, tuple(reserved_ids) if reserved_ids else (0,)))
-                        result = cursor.fetchone()
+                    # ✅ MILLORA: Buscar sempre la taula MÉS PETITA suficient (sense importar si és 2 o 4 persones)
+                    # Ordenar per capacitat ascendent per agafar la més petita
+                    cursor.execute("""
+                        SELECT id, table_number, capacity FROM tables
+                        WHERE capacity >= %s AND status = 'available' AND id NOT IN %s 
+                        ORDER BY capacity ASC, table_number ASC 
+                        LIMIT 1
+                    """, (num_people, tuple(reserved_ids) if reserved_ids else (0,)))
+                    result = cursor.fetchone()
 
                     if result:
                         return {'id': result[0], 'number': result[1], 'capacity': result[2]}
@@ -371,16 +361,19 @@ class AppointmentManager:
                     }
             
             # 2. Taula SENSE PAIRING amb capacitat mínima suficient (la més petita possible)
-            for table in tables_no_pairing:
-                if table[2] >= num_people:
-                    return {
-                        'tables': [{
-                            'id': table[0],
-                            'number': table[1],
-                            'capacity': table[2]
-                        }],
-                        'total_capacity': table[2]
-                    }
+            # ✅ CORRECCIÓ: Buscar la taula MÉS PETITA que sigui suficient
+            suitable_tables_no_pairing = [t for t in tables_no_pairing if t[2] >= num_people]
+            if suitable_tables_no_pairing:
+                # Ordenar per capacitat i agafar la més petita
+                best_table = min(suitable_tables_no_pairing, key=lambda t: t[2])
+                return {
+                    'tables': [{
+                        'id': best_table[0],
+                        'number': best_table[1],
+                        'capacity': best_table[2]
+                    }],
+                    'total_capacity': best_table[2]
+                }
             
             # 3. Taula AMB PAIRING amb capacitat EXACTA
             for table in tables_with_pairing:
@@ -394,17 +387,20 @@ class AppointmentManager:
                         'total_capacity': table[2]
                     }
             
-            # 4. Taula AMB PAIRING amb capacitat mínima suficient
-            for table in tables_with_pairing:
-                if table[2] >= num_people:
-                    return {
-                        'tables': [{
-                            'id': table[0],
-                            'number': table[1],
-                            'capacity': table[2]
-                        }],
-                        'total_capacity': table[2]
-                    }
+            # 4. Taula AMB PAIRING amb capacitat mínima suficient (la més petita possible)
+            # ✅ CORRECCIÓ: Buscar la taula MÉS PETITA que sigui suficient
+            suitable_tables_with_pairing = [t for t in tables_with_pairing if t[2] >= num_people]
+            if suitable_tables_with_pairing:
+                # Ordenar per capacitat i agafar la més petita
+                best_table = min(suitable_tables_with_pairing, key=lambda t: t[2])
+                return {
+                    'tables': [{
+                        'id': best_table[0],
+                        'number': best_table[1],
+                        'capacity': best_table[2]
+                    }],
+                    'total_capacity': best_table[2]
+                }
             
             # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
             all_tables = tables_no_pairing + tables_with_pairing
@@ -760,10 +756,10 @@ class AppointmentManager:
                 }
 
         # 2. Taula SENSE PAIRING amb capacitat mínima suficient (prioritzar la més petita)
-        suitable_tables = [t for t in tables_no_pairing if t[2] >= num_people]
-        if suitable_tables:
+        suitable_tables_no_pairing = [t for t in tables_no_pairing if t[2] >= num_people]
+        if suitable_tables_no_pairing:
             # Ordenar per capacitat ascendent i agafar la més petita
-            best_table = min(suitable_tables, key=lambda t: t[2])
+            best_table = min(suitable_tables_no_pairing, key=lambda t: t[2])
             return {
                 'tables': [{'id': best_table[0], 'number': best_table[1], 'capacity': best_table[2]}],
                 'total_capacity': best_table[2]
@@ -778,10 +774,10 @@ class AppointmentManager:
                 }
 
         # 4. Taula AMB PAIRING amb capacitat mínima suficient (prioritzar la més petita)
-        suitable_tables = [t for t in tables_with_pairing if t[2] >= num_people]
-        if suitable_tables:
+        suitable_tables_with_pairing = [t for t in tables_with_pairing if t[2] >= num_people]
+        if suitable_tables_with_pairing:
             # Ordenar per capacitat ascendent i agafar la més petita
-            best_table = min(suitable_tables, key=lambda t: t[2])
+            best_table = min(suitable_tables_with_pairing, key=lambda t: t[2])
             return {
                 'tables': [{'id': best_table[0], 'number': best_table[1], 'capacity': best_table[2]}],
                 'total_capacity': best_table[2]
@@ -1007,6 +1003,12 @@ class AppointmentManager:
             
             date_only = start_time.date()
             print(f"🕐 [TIMEZONE DEBUG] Date only: {date_only}")
+            
+            # ⚠️ VALIDACIÓ: Comprovar si el restaurant està obert a aquesta hora
+            is_open, period = self.is_restaurant_open(date, time)
+            if not is_open:
+                print(f"❌ [CREATE] Restaurant tancat: {period}")
+                return None
             
             # IMPORTANT: Assegurar que el client existeix a customers
             self.save_customer_info(phone, client_name)
