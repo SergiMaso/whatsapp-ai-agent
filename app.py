@@ -229,7 +229,7 @@ def get_appointments():
                 cursor.execute("""
                     SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
                            a.num_people, a.status, t.table_number, t.capacity, a.created_at, a.notes, a.table_id,
-                           a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes
+                           a.seated_at, a.left_at, a.duration_minutes, a.no_show, a.delay_minutes, a.booking_group_id
                     FROM appointments a
                     LEFT JOIN tables t ON a.table_id = t.id
                     ORDER BY a.start_time DESC
@@ -255,7 +255,8 @@ def get_appointments():
                         'left_at': row[14].isoformat() if row[14] else None,
                         'duration_minutes': row[15],
                         'no_show': row[16],
-                        'delay_minutes': row[17]
+                        'delay_minutes': row[17],
+                        'booking_group_id': str(row[18]) if row[18] else None
                     })
 
         return jsonify(appointments), 200
@@ -318,15 +319,74 @@ def create_appointment_api():
         for field in required:
             if field not in data:
                 return jsonify({'error': f'Camp obligatori: {field}'}), 400
-        
-        # Crear reserva
+
+        # Validar time slots si el mode és 'fixed'
+        time_slots_mode = config.get_str('time_slots_mode', 'interval')
+        if time_slots_mode == 'fixed':
+            # Obtenir horaris d'obertura per determinar si és lunch o dinner
+            opening_hours_data = appointment_manager.get_opening_hours(data['date'])
+            if not opening_hours_data or opening_hours_data.get('status') == 'closed':
+                return jsonify({'error': 'El restaurant està tancat aquest dia'}), 400
+
+            # Convertir el format de opening_hours a llista de slots
+            time_slots = []
+            if opening_hours_data.get('lunch_start') and opening_hours_data.get('lunch_end'):
+                time_slots.append({
+                    'start': opening_hours_data['lunch_start'],
+                    'end': opening_hours_data['lunch_end'],
+                    'name': 'lunch'
+                })
+            if opening_hours_data.get('dinner_start') and opening_hours_data.get('dinner_end'):
+                time_slots.append({
+                    'start': opening_hours_data['dinner_start'],
+                    'end': opening_hours_data['dinner_end'],
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                return jsonify({'error': 'No hi ha horaris disponibles per aquest dia'}), 400
+
+            # Determinar el període (lunch/dinner) segons l'hora
+            requested_time = data['time']
+            time_parts = requested_time.split(':')
+            requested_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+
+            period = None
+            for slot in time_slots:
+                slot_start_parts = slot['start'].split(':')
+                slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                slot_end_parts = slot['end'].split(':')
+                slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                if slot_start_minutes <= requested_minutes <= slot_end_minutes:
+                    period = slot['name']
+                    break
+
+            if not period:
+                return jsonify({'error': f'L\'hora {requested_time} està fora dels horaris d\'obertura'}), 400
+
+            # Obtenir els time slots permesos per aquest període
+            if period == 'lunch':
+                allowed_slots = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+            else:  # dinner
+                allowed_slots = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+            # Validar que l'hora sol·licitada estigui en els slots permesos
+            if requested_time not in allowed_slots:
+                slots_str = ', '.join(allowed_slots)
+                return jsonify({
+                    'error': f'L\'hora {requested_time} no està disponible. Horaris permesos per {period}: {slots_str}'
+                }), 400
+
+        # Crear reserva (usar configuració per defecte si no s'especifica duració)
+        default_duration = config.get_float('default_booking_duration_hours', 1.0)
         result = appointment_manager.create_appointment(
             phone=data['phone'],
             client_name=data['client_name'],
             date=data['date'],
             time=data['time'],
             num_people=data['num_people'],
-            duration_hours=data.get('duration_hours', 1)
+            duration_hours=data.get('duration_hours', default_duration)
         )
         
         if not result:
@@ -2142,11 +2202,12 @@ def elevenlabs_create_appointment():
                 'success': False,
                 'message': 'Falta informació. Necessito telèfon, nom, data i hora.'
             }), 400
-        
-        if num_people < 1 or num_people > 8:
+
+        max_people = config.get_int('max_people_per_booking', 8)
+        if num_people < 1 or num_people > max_people:
             return jsonify({
                 'success': False,
-                'message': 'Solo aceptamos reservas de 1 a 8 personas.'
+                'message': f'Solo aceptamos reservas de 1 a {max_people} personas.'
             }), 400
         
         # Netejar només prefixos de plataforma (mantenir el + i els dígits)
@@ -2160,6 +2221,9 @@ def elevenlabs_create_appointment():
         # Obtenir idioma del client
         language = appointment_manager.get_customer_language(clean_phone) or 'es'
 
+        # Obtenir durada per defecte de configuració
+        default_duration = config.get_float('default_booking_duration_hours', 1.0)
+
         # ⭐ Crear reserva amb alternatives
         result = appointment_manager.create_appointment_with_alternatives(
             phone=clean_phone,
@@ -2167,7 +2231,7 @@ def elevenlabs_create_appointment():
             date=date,
             time=time,
             num_people=num_people,
-            duration_hours=1
+            duration_hours=default_duration
         )
 
         logger.info(f"📊 [ELEVEN LABS CREATE] Result: {result}")
@@ -2560,6 +2624,68 @@ def elevenlabs_cancel_appointment():
             'success': False,
             'message': 'Error cancelando la reserva.'
         }), 500
+
+
+# --------------------------------------------------------------------------
+# CLIENT CONFIGURATION ENDPOINTS
+# --------------------------------------------------------------------------
+
+from utils.config import config
+
+@app.route('/api/config', methods=['GET'])
+@login_required
+@admin_required
+def get_client_config():
+    """
+    📋 Obtenir tota la configuració del restaurant amb metadades
+    Només accessible per admin/owner
+    """
+    try:
+        configs = config.get_all_with_metadata()
+
+        logger.info(f"✅ Configuració obtinguda: {len(configs)} claus")
+
+        return jsonify(configs), 200
+
+    except Exception as e:
+        logger.error(f"❌ Error obtenint configuració: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/config/<key>', methods=['PUT'])
+@login_required
+@admin_required
+def update_client_config(key):
+    """
+    🔧 Actualitzar una clau de configuració
+    Només accessible per admin/owner
+    """
+    try:
+        data = request.json
+        new_value = data.get('value')
+
+        if new_value is None:
+            return jsonify({'error': 'El camp "value" és obligatori'}), 400
+
+        # Actualitzar configuració
+        config.set(key, new_value)
+
+        logger.info(f"✅ Configuració actualitzada: {key} = {new_value}")
+
+        return jsonify({
+            'message': 'Configuració actualitzada correctament',
+            'key': key,
+            'value': new_value
+        }), 200
+
+    except Exception as e:
+        logger.error(f"❌ Error actualitzant configuració {key}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 # --------------------------------------------------------------------------
 # MAIN

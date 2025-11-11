@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import os
 from dotenv import load_dotenv
 import pytz  # IMPORTANT: Per gestionar timezones
+from utils.config import config
 
 load_dotenv()
 
@@ -454,7 +455,7 @@ class AppointmentManager:
     
 
 
-    def find_next_available_slot(self, requested_date, requested_time, num_people, max_days_ahead=7):
+    def find_next_available_slot(self, requested_date, requested_time, num_people, max_days_ahead=None):
         """
         Buscar el proper slot disponible a partir d'una data/hora donada
 
@@ -474,6 +475,10 @@ class AppointmentManager:
         }
         o None si no hi ha disponibilitat
         """
+        # Obtenir max_days_ahead de configuració si no s'ha especificat
+        if max_days_ahead is None:
+            max_days_ahead = config.get_int('search_window_days', 7)
+
         try:
             now = datetime.now(self.BARCELONA_TZ)
             
@@ -560,59 +565,91 @@ class AppointmentManager:
                 return None
             
             print(f"🕐 [SLOT] Intervals disponibles: {time_slots}")
-            
+
             # Convertir hora sol·licitada a minuts
             start_time_parts = start_time.split(':')
             requested_minutes = int(start_time_parts[0]) * 60 + int(start_time_parts[1])
-            
-            # Per cada interval d'horari
-            for slot in time_slots:
-                slot_start_parts = slot['start'].split(':')
-                slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
-                
-                slot_end_parts = slot['end'].split(':')
-                slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
-                
-                # Generar possibles hores cada 30 minuts dins de l'interval
-                # Començar des de l'hora sol·licitada o l'inici de l'interval
-                start_checking_from = max(requested_minutes, slot_start_minutes)
 
-                # Arrodonir a la propera mitja hora
-                if start_checking_from % 30 != 0:
-                    start_checking_from = ((start_checking_from // 30) + 1) * 30
+            # Obtenir mode de time slots i configuració
+            time_slots_mode = config.get_str('time_slots_mode', 'interval')
 
-                # Iterar cada 30 minuts fins l'hora de tancament (inclosa)
-                # L'hora de tancament és l'hora d'INICI de l'última reserva possible
-                for check_minutes in range(start_checking_from, slot_end_minutes + 1, 30):
-                    check_hour = check_minutes // 60
-                    check_minute = check_minutes % 60
-                    check_time = f"{check_hour:02d}:{check_minute:02d}"
+            # Determinar els temps a comprovar segons el mode
+            times_to_check = []
 
-                    # Crear datetime per aquesta hora
-                    check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
-                    check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
-                    
-                    # VALIDACIÓ 3: Assegurar que no sigui en el passat
-                    if check_datetime <= now:
-                        print(f"⏭️  [SLOT] {check_time} és en el passat, saltant...")
-                        continue
-                    
-                    # VALIDACIÓ 4: Comprovar disponibilitat de taules
-                    end_datetime = check_datetime + timedelta(hours=1)
-                    tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
-                    
-                    if tables_result:
-                        is_requested = (check_time == start_time)
-                        print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
-                        
-                        return {
-                            'date': date,
-                            'time': check_time,
-                            'is_requested': is_requested,
-                            'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
-                        }
-                    else:
-                        print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
+            if time_slots_mode == 'fixed':
+                # Mode fixed: utilitzar horaris fixos definits
+                for slot in time_slots:
+                    if slot['name'] == 'lunch':
+                        fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                    else:  # dinner
+                        fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                    # Només afegir els temps fixos que cauen dins del rang del slot i després de l'hora sol·licitada
+                    for time_str in fixed_times:
+                        time_parts = time_str.split(':')
+                        time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+                        if slot_start_minutes <= time_minutes <= slot_end_minutes and time_minutes >= requested_minutes:
+                            times_to_check.append((time_minutes, slot))
+            else:
+                # Mode interval: generar temps cada N minuts
+                time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+
+                for slot in time_slots:
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                    # Començar des de l'hora sol·licitada o l'inici de l'interval
+                    start_checking_from = max(requested_minutes, slot_start_minutes)
+
+                    # Arrodonir al proper interval
+                    if start_checking_from % time_slot_interval != 0:
+                        start_checking_from = ((start_checking_from // time_slot_interval) + 1) * time_slot_interval
+
+                    # Generar temps cada N minuts
+                    for check_minutes in range(start_checking_from, slot_end_minutes + 1, time_slot_interval):
+                        times_to_check.append((check_minutes, slot))
+
+            # Ordenar els temps per ordre cronològic
+            times_to_check.sort(key=lambda x: x[0])
+
+            # Comprovar cada temps
+            for check_minutes, slot in times_to_check:
+                check_hour = check_minutes // 60
+                check_minute = check_minutes % 60
+                check_time = f"{check_hour:02d}:{check_minute:02d}"
+
+                # Crear datetime per aquesta hora
+                check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
+                check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
+
+                # VALIDACIÓ 3: Assegurar que no sigui en el passat
+                if check_datetime <= now:
+                    print(f"⏭️  [SLOT] {check_time} és en el passat, saltant...")
+                    continue
+
+                # VALIDACIÓ 4: Comprovar disponibilitat de taules
+                end_datetime = check_datetime + timedelta(hours=1)
+                tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
+
+                if tables_result:
+                    is_requested = (check_time == start_time)
+                    print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
+
+                    return {
+                        'date': date,
+                        'time': check_time,
+                        'is_requested': is_requested,
+                        'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
+                    }
+                else:
+                    print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
             
             print(f"❌ [SLOT] No s'ha trobat cap hora disponible el {date}")
             return None
@@ -722,13 +759,15 @@ class AppointmentManager:
                     'total_capacity': table[2]
                 }
 
-        # 2. Taula SENSE PAIRING amb capacitat mínima suficient
-        for table in tables_no_pairing:
-            if table[2] >= num_people:
-                return {
-                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
-                    'total_capacity': table[2]
-                }
+        # 2. Taula SENSE PAIRING amb capacitat mínima suficient (prioritzar la més petita)
+        suitable_tables = [t for t in tables_no_pairing if t[2] >= num_people]
+        if suitable_tables:
+            # Ordenar per capacitat ascendent i agafar la més petita
+            best_table = min(suitable_tables, key=lambda t: t[2])
+            return {
+                'tables': [{'id': best_table[0], 'number': best_table[1], 'capacity': best_table[2]}],
+                'total_capacity': best_table[2]
+            }
 
         # 3. Taula AMB PAIRING amb capacitat EXACTA
         for table in tables_with_pairing:
@@ -738,13 +777,15 @@ class AppointmentManager:
                     'total_capacity': table[2]
                 }
 
-        # 4. Taula AMB PAIRING amb capacitat mínima suficient
-        for table in tables_with_pairing:
-            if table[2] >= num_people:
-                return {
-                    'tables': [{'id': table[0], 'number': table[1], 'capacity': table[2]}],
-                    'total_capacity': table[2]
-                }
+        # 4. Taula AMB PAIRING amb capacitat mínima suficient (prioritzar la més petita)
+        suitable_tables = [t for t in tables_with_pairing if t[2] >= num_people]
+        if suitable_tables:
+            # Ordenar per capacitat ascendent i agafar la més petita
+            best_table = min(suitable_tables, key=lambda t: t[2])
+            return {
+                'tables': [{'id': best_table[0], 'number': best_table[1], 'capacity': best_table[2]}],
+                'total_capacity': best_table[2]
+            }
 
         # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
         for table in available_tables:
@@ -850,47 +891,77 @@ class AppointmentManager:
 
                     print(f"📊 [CHECK] Carregades {len(daily_appointments)} reserves i {len(all_tables)} taules")
 
-                    # Generar llista de slots cada 30 minuts
+                    # Obtenir mode de time slots i configuració
+                    time_slots_mode = config.get_str('time_slots_mode', 'interval')
+
+                    # Determinar els temps a comprovar segons el mode
+                    times_to_check = []  # Format: (time_minutes, period_name)
+
+                    if time_slots_mode == 'fixed':
+                        # Mode fixed: utilitzar horaris fixos definits
+                        for slot in time_slots:
+                            if slot['name'] == 'lunch':
+                                fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                            else:  # dinner
+                                fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                            slot_start_parts = slot['start'].split(':')
+                            slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                            slot_end_parts = slot['end'].split(':')
+                            slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                            # Només afegir els temps fixos que cauen dins del rang del slot
+                            for time_str in fixed_times:
+                                time_parts = time_str.split(':')
+                                time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+                                if slot_start_minutes <= time_minutes <= slot_end_minutes:
+                                    times_to_check.append((time_minutes, slot['name']))
+                    else:
+                        # Mode interval: generar temps cada N minuts
+                        time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+
+                        for slot in time_slots:
+                            slot_start_parts = slot['start'].split(':')
+                            slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                            slot_end_parts = slot['end'].split(':')
+                            slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                            # Generar temps cada N minuts
+                            for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, time_slot_interval):
+                                times_to_check.append((check_minutes, slot['name']))
+
+                    # Generar llista de slots disponibles
                     available_slots = []
 
-                    for slot in time_slots:
-                        slot_start_parts = slot['start'].split(':')
-                        slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    for check_minutes, period_name in times_to_check:
+                        check_hour = check_minutes // 60
+                        check_minute = check_minutes % 60
+                        check_time = f"{check_hour:02d}:{check_minute:02d}"
 
-                        slot_end_parts = slot['end'].split(':')
-                        slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+                        # Crear datetime per aquesta hora
+                        check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
+                        check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
 
-                        # Generar slots cada 30 minuts fins l'hora de tancament (inclosa)
-                        # L'hora de tancament és l'hora d'INICI de l'última reserva possible
-                        for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, 30):
-                            check_hour = check_minutes // 60
-                            check_minute = check_minutes % 60
-                            check_time = f"{check_hour:02d}:{check_minute:02d}"
+                        # Saltar si és en el passat
+                        if check_datetime <= now:
+                            continue
 
-                            # Crear datetime per aquesta hora
-                            check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
-                            check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
+                        # ⚡ OPTIMITZACIÓ: Calcular taules ocupades EN MEMÒRIA
+                        end_datetime = check_datetime + timedelta(hours=1)
 
-                            # Saltar si és en el passat
-                            if check_datetime <= now:
-                                continue
+                        occupied_ids = {
+                            apt[0] for apt in daily_appointments
+                            if apt[1] < end_datetime and apt[2] > check_datetime
+                        }
 
-                            # ⚡ OPTIMITZACIÓ: Calcular taules ocupades EN MEMÒRIA
-                            end_datetime = check_datetime + timedelta(hours=1)
+                        # ⚡ OPTIMITZACIÓ: Buscar taules disponibles EN MEMÒRIA (sense queries)
+                        tables_result = self._find_tables_in_memory(all_tables, occupied_ids, num_people)
 
-                            occupied_ids = {
-                                apt[0] for apt in daily_appointments
-                                if apt[1] < end_datetime and apt[2] > check_datetime
-                            }
-
-                            # ⚡ OPTIMITZACIÓ: Buscar taules disponibles EN MEMÒRIA (sense queries)
-                            tables_result = self._find_tables_in_memory(all_tables, occupied_ids, num_people)
-
-                            available_slots.append({
-                                'time': check_time,
-                                'available': tables_result is not None,
-                                'period': slot['name']
-                            })
+                        available_slots.append({
+                            'time': check_time,
+                            'available': tables_result is not None,
+                            'period': period_name
+                        })
 
                     # Filtrar només disponibles
                     available_only = [s for s in available_slots if s['available']]
@@ -950,19 +1021,24 @@ class AppointmentManager:
 
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Crear una reserva per cada taula
+                    # Generar un booking_group_id únic per aquesta reserva
+                    cursor.execute("SELECT gen_random_uuid()")
+                    booking_group_id = cursor.fetchone()[0]
+
+                    # Crear una reserva per cada taula, totes amb el mateix booking_group_id
                     appointment_ids = []
                     for table in tables_result['tables']:
                         print(f"🕐 [TIMEZONE DEBUG] Abans d'inserir a BD:")
                         print(f"🕐 [TIMEZONE DEBUG]   - start_time que s'enviarà: {start_time} (type: {type(start_time)})")
                         print(f"🕐 [TIMEZONE DEBUG]   - end_time que s'enviarà: {end_time} (type: {type(end_time)})")
+                        print(f"🕐 [BOOKING GROUP] booking_group_id: {booking_group_id}")
 
                         cursor.execute("""
                             INSERT INTO appointments
-                            (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            (phone, client_name, date, start_time, end_time, num_people, table_id, language, notes, status, booking_group_id)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             RETURNING id, start_time, end_time
-                        """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed'))
+                        """, (phone, client_name, date_only, start_time, end_time, num_people, table['id'], customer_language, notes, 'confirmed', booking_group_id))
 
                         result = cursor.fetchone()
                         appointment_ids.append(result[0])
@@ -986,6 +1062,7 @@ class AppointmentManager:
                     return {
                         'id': appointment_ids[0],  # ID principal
                         'ids': appointment_ids,
+                        'booking_group_id': str(booking_group_id),  # UUID del grup de reserves
                         'table': tables_result['tables'][0] if len(tables_result['tables']) == 1 else {
                             'number': f"{tables_result['tables'][0]['number']}+{tables_result['tables'][1]['number']}",
                             'capacity': tables_result['total_capacity'],
@@ -1140,16 +1217,46 @@ class AppointmentManager:
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s AND phone = %s", (appointment_id, phone))
-
+                    # Obtenir el booking_group_id de la reserva
                     cursor.execute("""
-                        UPDATE customers
-                        SET visit_count = GREATEST(visit_count - 1, 0)
-                        WHERE phone = %s
-                    """, (phone,))
+                        SELECT booking_group_id FROM appointments
+                        WHERE id = %s AND phone = %s AND status = 'confirmed'
+                    """, (appointment_id, phone))
+
+                    result = cursor.fetchone()
+                    if not result:
+                        return False
+
+                    booking_group_id = result[0]
+
+                    # Cancel·lar TOTES les reserves del mateix booking_group_id
+                    # Això permet cancel·lar reserves multi-taula d'un cop
+                    if booking_group_id:
+                        cursor.execute("""
+                            UPDATE appointments
+                            SET status = 'cancelled'
+                            WHERE booking_group_id = %s AND phone = %s AND status = 'confirmed'
+                        """, (booking_group_id, phone))
+                        num_cancelled = cursor.rowcount
+                        print(f"✅ Cancel·lades {num_cancelled} reserves del grup {booking_group_id}")
+                    else:
+                        # Fallback per reserves antigues sense booking_group_id
+                        cursor.execute("""
+                            UPDATE appointments
+                            SET status = 'cancelled'
+                            WHERE id = %s AND phone = %s AND status = 'confirmed'
+                        """, (appointment_id, phone))
+                        num_cancelled = cursor.rowcount
+
+                    if num_cancelled > 0:
+                        cursor.execute("""
+                            UPDATE customers
+                            SET visit_count = GREATEST(visit_count - 1, 0)
+                            WHERE phone = %s
+                        """, (phone,))
 
                     conn.commit()
-                    return True
+                    return num_cancelled > 0
         except Exception as e:
             print(f"❌ Error cancelando reserva: {e}")
             return False
@@ -1653,20 +1760,22 @@ class ConversationManager:
 
     def clean_old_messages(self):
         """
-        Eliminar missatges de més de 15 dies de TOTS els usuaris
+        Eliminar missatges antics de TOTS els usuaris
         NOTA: Aquesta funció només s'hauria de cridar des del scheduler, NO a cada save!
         """
+        cleanup_days = config.get_int('cleanup_messages_days', 15)
+
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("""
+                    cursor.execute(f"""
                         DELETE FROM conversations
-                        WHERE created_at < NOW() - INTERVAL '15 days'
+                        WHERE created_at < NOW() - INTERVAL '{cleanup_days} days'
                     """)
 
                     deleted_count = cursor.rowcount
                     if deleted_count > 0:
-                        print(f"🧹 Netejats {deleted_count} missatges antics (>15 dies)")
+                        print(f"🧹 Netejats {deleted_count} missatges antics (>{cleanup_days} dies)")
 
                     conn.commit()
         except Exception as e:
@@ -1685,16 +1794,20 @@ class ConversationManager:
         except Exception as e:
             print(f"❌ Error guardando mensaje: {e}")
 
-    def get_history(self, phone, limit=10):
-        """Obtenir historial de conversa NOMÉS dels últims 20 minuts"""
+    def get_history(self, phone, limit=None):
+        """Obtenir historial de conversa recent"""
+        if limit is None:
+            limit = config.get_int('conversation_history_limit', 10)
+        history_minutes = config.get_int('conversation_history_minutes', 20)
+
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("""
+                    cursor.execute(f"""
                         SELECT role, content
                         FROM conversations
                         WHERE phone = %s
-                          AND created_at > NOW() - INTERVAL '20 minutes'
+                          AND created_at > NOW() - INTERVAL '{history_minutes} minutes'
                         ORDER BY created_at DESC
                         LIMIT %s
                     """, (phone, limit))
@@ -1715,16 +1828,18 @@ class ConversationManager:
             print(f"❌ Error limpiando historial: {e}")
 
     def get_message_count(self, phone):
-        """Comptar missatges dels últims 20 minuts"""
+        """Comptar missatges recents"""
+        history_minutes = config.get_int('conversation_history_minutes', 20)
+
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("""
+                    cursor.execute(f"""
                         SELECT COUNT(*)
                         FROM conversations
                         WHERE phone = %s
                           AND role = 'user'
-                          AND created_at > NOW() - INTERVAL '20 minutes'
+                          AND created_at > NOW() - INTERVAL '{history_minutes} minutes'
                     """, (phone,))
 
                     count = cursor.fetchone()[0]
