@@ -30,7 +30,10 @@ INSERT INTO restaurant_config (key, value, value_type, category, description) VA
     ('supported_languages', 'ca,es,en', 'string', 'restaurant', 'Idiomes suportats (separats per comes)'),
 
     -- Reserves
-    ('time_slot_interval_minutes', '30', 'int', 'booking', 'Interval entre franges horàries (minuts)'),
+    ('time_slots_mode', 'interval', 'string', 'booking', 'Mode de time slots: "interval" (cada X minuts) o "fixed" (horaris fixos)'),
+    ('time_slot_interval_minutes', '30', 'int', 'booking', 'Interval entre franges horàries en minuts (només si mode=interval)'),
+    ('fixed_time_slots_lunch', '13:00,15:00', 'string', 'booking', 'Horaris fixos per dinar (només si mode=fixed). Format: HH:MM,HH:MM'),
+    ('fixed_time_slots_dinner', '20:00,21:30', 'string', 'booking', 'Horaris fixos per sopar (només si mode=fixed). Format: HH:MM,HH:MM'),
     ('default_booking_duration_hours', '1', 'float', 'booking', 'Durada per defecte d''una reserva (hores)'),
     ('search_window_days', '7', 'int', 'booking', 'Dies endavant per buscar disponibilitat'),
 

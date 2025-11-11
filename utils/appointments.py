@@ -565,62 +565,91 @@ class AppointmentManager:
                 return None
             
             print(f"🕐 [SLOT] Intervals disponibles: {time_slots}")
-            
+
             # Convertir hora sol·licitada a minuts
             start_time_parts = start_time.split(':')
             requested_minutes = int(start_time_parts[0]) * 60 + int(start_time_parts[1])
 
-            # Obtenir interval de time slots de configuració
-            time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+            # Obtenir mode de time slots i configuració
+            time_slots_mode = config.get_str('time_slots_mode', 'interval')
 
-            # Per cada interval d'horari
-            for slot in time_slots:
-                slot_start_parts = slot['start'].split(':')
-                slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+            # Determinar els temps a comprovar segons el mode
+            times_to_check = []
 
-                slot_end_parts = slot['end'].split(':')
-                slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+            if time_slots_mode == 'fixed':
+                # Mode fixed: utilitzar horaris fixos definits
+                for slot in time_slots:
+                    if slot['name'] == 'lunch':
+                        fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                    else:  # dinner
+                        fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
 
-                # Generar possibles hores cada N minuts dins de l'interval
-                # Començar des de l'hora sol·licitada o l'inici de l'interval
-                start_checking_from = max(requested_minutes, slot_start_minutes)
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
 
-                # Arrodonir al proper interval
-                if start_checking_from % time_slot_interval != 0:
-                    start_checking_from = ((start_checking_from // time_slot_interval) + 1) * time_slot_interval
+                    # Només afegir els temps fixos que cauen dins del rang del slot i després de l'hora sol·licitada
+                    for time_str in fixed_times:
+                        time_parts = time_str.split(':')
+                        time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+                        if slot_start_minutes <= time_minutes <= slot_end_minutes and time_minutes >= requested_minutes:
+                            times_to_check.append((time_minutes, slot))
+            else:
+                # Mode interval: generar temps cada N minuts
+                time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
 
-                # Iterar cada N minuts fins l'hora de tancament (inclosa)
-                # L'hora de tancament és l'hora d'INICI de l'última reserva possible
-                for check_minutes in range(start_checking_from, slot_end_minutes + 1, time_slot_interval):
-                    check_hour = check_minutes // 60
-                    check_minute = check_minutes % 60
-                    check_time = f"{check_hour:02d}:{check_minute:02d}"
+                for slot in time_slots:
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
 
-                    # Crear datetime per aquesta hora
-                    check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
-                    check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
-                    
-                    # VALIDACIÓ 3: Assegurar que no sigui en el passat
-                    if check_datetime <= now:
-                        print(f"⏭️  [SLOT] {check_time} és en el passat, saltant...")
-                        continue
-                    
-                    # VALIDACIÓ 4: Comprovar disponibilitat de taules
-                    end_datetime = check_datetime + timedelta(hours=1)
-                    tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
-                    
-                    if tables_result:
-                        is_requested = (check_time == start_time)
-                        print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
-                        
-                        return {
-                            'date': date,
-                            'time': check_time,
-                            'is_requested': is_requested,
-                            'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
-                        }
-                    else:
-                        print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
+                    # Començar des de l'hora sol·licitada o l'inici de l'interval
+                    start_checking_from = max(requested_minutes, slot_start_minutes)
+
+                    # Arrodonir al proper interval
+                    if start_checking_from % time_slot_interval != 0:
+                        start_checking_from = ((start_checking_from // time_slot_interval) + 1) * time_slot_interval
+
+                    # Generar temps cada N minuts
+                    for check_minutes in range(start_checking_from, slot_end_minutes + 1, time_slot_interval):
+                        times_to_check.append((check_minutes, slot))
+
+            # Ordenar els temps per ordre cronològic
+            times_to_check.sort(key=lambda x: x[0])
+
+            # Comprovar cada temps
+            for check_minutes, slot in times_to_check:
+                check_hour = check_minutes // 60
+                check_minute = check_minutes % 60
+                check_time = f"{check_hour:02d}:{check_minute:02d}"
+
+                # Crear datetime per aquesta hora
+                check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
+                check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
+
+                # VALIDACIÓ 3: Assegurar que no sigui en el passat
+                if check_datetime <= now:
+                    print(f"⏭️  [SLOT] {check_time} és en el passat, saltant...")
+                    continue
+
+                # VALIDACIÓ 4: Comprovar disponibilitat de taules
+                end_datetime = check_datetime + timedelta(hours=1)
+                tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
+
+                if tables_result:
+                    is_requested = (check_time == start_time)
+                    print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
+
+                    return {
+                        'date': date,
+                        'time': check_time,
+                        'is_requested': is_requested,
+                        'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
+                    }
+                else:
+                    print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
             
             print(f"❌ [SLOT] No s'ha trobat cap hora disponible el {date}")
             return None
@@ -858,50 +887,77 @@ class AppointmentManager:
 
                     print(f"📊 [CHECK] Carregades {len(daily_appointments)} reserves i {len(all_tables)} taules")
 
-                    # Obtenir interval de time slots de configuració
-                    time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+                    # Obtenir mode de time slots i configuració
+                    time_slots_mode = config.get_str('time_slots_mode', 'interval')
 
-                    # Generar llista de slots cada N minuts
+                    # Determinar els temps a comprovar segons el mode
+                    times_to_check = []  # Format: (time_minutes, period_name)
+
+                    if time_slots_mode == 'fixed':
+                        # Mode fixed: utilitzar horaris fixos definits
+                        for slot in time_slots:
+                            if slot['name'] == 'lunch':
+                                fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                            else:  # dinner
+                                fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                            slot_start_parts = slot['start'].split(':')
+                            slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                            slot_end_parts = slot['end'].split(':')
+                            slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                            # Només afegir els temps fixos que cauen dins del rang del slot
+                            for time_str in fixed_times:
+                                time_parts = time_str.split(':')
+                                time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+                                if slot_start_minutes <= time_minutes <= slot_end_minutes:
+                                    times_to_check.append((time_minutes, slot['name']))
+                    else:
+                        # Mode interval: generar temps cada N minuts
+                        time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+
+                        for slot in time_slots:
+                            slot_start_parts = slot['start'].split(':')
+                            slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                            slot_end_parts = slot['end'].split(':')
+                            slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                            # Generar temps cada N minuts
+                            for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, time_slot_interval):
+                                times_to_check.append((check_minutes, slot['name']))
+
+                    # Generar llista de slots disponibles
                     available_slots = []
 
-                    for slot in time_slots:
-                        slot_start_parts = slot['start'].split(':')
-                        slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    for check_minutes, period_name in times_to_check:
+                        check_hour = check_minutes // 60
+                        check_minute = check_minutes % 60
+                        check_time = f"{check_hour:02d}:{check_minute:02d}"
 
-                        slot_end_parts = slot['end'].split(':')
-                        slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+                        # Crear datetime per aquesta hora
+                        check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
+                        check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
 
-                        # Generar slots cada N minuts fins l'hora de tancament (inclosa)
-                        # L'hora de tancament és l'hora d'INICI de l'última reserva possible
-                        for check_minutes in range(slot_start_minutes, slot_end_minutes + 1, time_slot_interval):
-                            check_hour = check_minutes // 60
-                            check_minute = check_minutes % 60
-                            check_time = f"{check_hour:02d}:{check_minute:02d}"
+                        # Saltar si és en el passat
+                        if check_datetime <= now:
+                            continue
 
-                            # Crear datetime per aquesta hora
-                            check_datetime_naive = datetime.strptime(f"{date} {check_time}", "%Y-%m-%d %H:%M")
-                            check_datetime = self.BARCELONA_TZ.localize(check_datetime_naive)
+                        # ⚡ OPTIMITZACIÓ: Calcular taules ocupades EN MEMÒRIA
+                        end_datetime = check_datetime + timedelta(hours=1)
 
-                            # Saltar si és en el passat
-                            if check_datetime <= now:
-                                continue
+                        occupied_ids = {
+                            apt[0] for apt in daily_appointments
+                            if apt[1] < end_datetime and apt[2] > check_datetime
+                        }
 
-                            # ⚡ OPTIMITZACIÓ: Calcular taules ocupades EN MEMÒRIA
-                            end_datetime = check_datetime + timedelta(hours=1)
+                        # ⚡ OPTIMITZACIÓ: Buscar taules disponibles EN MEMÒRIA (sense queries)
+                        tables_result = self._find_tables_in_memory(all_tables, occupied_ids, num_people)
 
-                            occupied_ids = {
-                                apt[0] for apt in daily_appointments
-                                if apt[1] < end_datetime and apt[2] > check_datetime
-                            }
-
-                            # ⚡ OPTIMITZACIÓ: Buscar taules disponibles EN MEMÒRIA (sense queries)
-                            tables_result = self._find_tables_in_memory(all_tables, occupied_ids, num_people)
-
-                            available_slots.append({
-                                'time': check_time,
-                                'available': tables_result is not None,
-                                'period': slot['name']
-                            })
+                        available_slots.append({
+                            'time': check_time,
+                            'available': tables_result is not None,
+                            'period': period_name
+                        })
 
                     # Filtrar només disponibles
                     available_only = [s for s in available_slots if s['available']]
