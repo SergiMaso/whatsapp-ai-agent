@@ -1056,9 +1056,11 @@ class AppointmentManager:
             if not is_open:
                 print(f"❌ [CREATE] Restaurant tancat: {period}")
                 return None
-            
+
+            if not language:
+                language = 'es'  # per defecte
             # IMPORTANT: Assegurar que el client existeix a customers
-            self.save_customer_info(phone, client_name)
+            self.save_customer_info(phone, client_name, language)
             
             customer_language = self.get_customer_language(phone) or 'es'
             
