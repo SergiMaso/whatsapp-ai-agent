@@ -17,6 +17,7 @@ from utils.elevenlabs_agent import elevenlabs_manager
 import logging
 from twilio.twiml.voice_response import VoiceResponse
 import time
+import threading
 
 # Imports per autenticació
 from flask_login import login_required, current_user
@@ -139,6 +140,49 @@ def home():
     <p>Webhook WhatsApp: <code>https://tu-dominio.railway.app/whatsapp</code></p>
     """
 
+def process_whatsapp_async(incoming_msg, from_number, to_number):
+    """Processa el missatge en background i envia resposta via Twilio API"""
+    try:
+        start_time = time.time()
+        print(f"🔄 [ASYNC] Processant missatge en background per {from_number}")
+
+        # Procesar con IA
+        ai_response = process_message_with_ai(
+            incoming_msg,
+            from_number,
+            appointment_manager,
+            conversation_manager
+        )
+
+        ai_time = time.time() - start_time
+        print(f"⏱️  [ASYNC] AI processing took {ai_time:.2f}s")
+
+        # Enviar resposta via Twilio API
+        print(f"📤 [ASYNC] Enviant resposta via API: {ai_response[:100]}...")
+        message = twilio_client.messages.create(
+            body=ai_response,
+            from_=to_number,
+            to=from_number
+        )
+
+        print(f"✅ [ASYNC] Resposta enviada correctament (SID: {message.sid})")
+
+    except Exception as e:
+        print(f"❌ [ASYNC] Error en processament: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # Intentar enviar missatge d'error
+        try:
+            twilio_client.messages.create(
+                body="Ho sento, hi ha hagut un error processant el missatge. Si us plau, intenta-ho de nou.",
+                from_=to_number,
+                to=from_number
+            )
+        except:
+            print(f"❌ [ASYNC] No s'ha pogut enviar missatge d'error")
+
+
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_webhook():
     """Endpoint principal que recibe mensajes de WhatsApp"""
@@ -147,6 +191,7 @@ def whatsapp_webhook():
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
+    to_number = request.values.get('To', '')
 
     print(f"📱 Mensaje WhatsApp de {from_number}: {incoming_msg}")
     print(f"⏱️  [TIMING] Webhook started at {time.strftime('%H:%M:%S')}")
@@ -178,21 +223,18 @@ def whatsapp_webhook():
             print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
             return str(resp)
 
-        # Procesar con IA
-        print(f"🤖 Procesando con IA...")
-        ai_start = time.time()
-        ai_response = process_message_with_ai(
-            incoming_msg,
-            from_number,
-            appointment_manager,
-            conversation_manager
+        # Processar de forma asíncrona per evitar timeout de Twilio (15s)
+        print(f"⚡ Llançant processament asíncron...")
+        thread = threading.Thread(
+            target=process_whatsapp_async,
+            args=(incoming_msg, from_number, to_number)
         )
-        ai_time = time.time() - ai_start
-        print(f"⏱️  [TIMING] AI processing took {ai_time:.2f}s")
+        thread.daemon = True
+        thread.start()
 
-        print(f"📤 Enviando respuesta a WhatsApp: {ai_response[:100]}...")
-        resp.message(ai_response)
-        print(f"✅ Respuesta añadida a MessagingResponse")
+        # Retornar resposta immediata confirmant recepció
+        resp.message("✅ Rebut! Estic processant la teva sol·licitud...")
+        print(f"✅ Respuesta inmediata enviada, procesamiento en background")
 
     except Exception as e:
         print(f"❌ Error en webhook: {e}")

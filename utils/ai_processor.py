@@ -14,15 +14,19 @@ load_dotenv()
 # Cache d'idiomes en memòria per evitar canvis inesperats quan BD falla
 LANGUAGE_CACHE = {}
 
-def detect_language(text):
+def detect_language(text, min_keywords=2):
     """
     Detecta l'idioma del text comptant coincidències amb keywords
-    Retorna l'idioma amb més paraules úniques detectades
+    Retorna l'idioma amb més paraules úniques detectades, o None si no hi ha prou evidència
+
+    Args:
+        text: Text a analitzar
+        min_keywords: Mínim de keywords necessàries per considerar la detecció vàlida
     """
     try:
         text_lower = text.lower().strip()
         text_noaccents = unidecode(text_lower)
-        
+
         words = re.findall(r"\b\w+\b", text_noaccents)
         words_set = set(words)
 
@@ -35,18 +39,18 @@ def detect_language(text):
             'noche', 'tarde', 'para', 'con', 'que', 'como',
             'cuando', 'donde', 'quien', 'cual', 'cuantos'
         }
-        
+
         # Keywords catalanes
         catalan_keywords = {
             'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
             'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
             'taula', 'persones', 'dinar', 'sopar',
             'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
-            'estic', 'som',
+            'estic', 'som', 'bones', 'voldria', 'mira',
             'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar',
             'dic', 'em', 'fer'
         }
-        
+
         # Keywords angleses
         english_keywords = {
             'want', 'need', 'can', 'have', 'today', 'tomorrow',
@@ -54,31 +58,39 @@ def detect_language(text):
             'hello', 'good', 'morning', 'evening',
             'how', 'when', 'where', 'who', 'what', 'many'
         }
-        
+
         # Comptar coincidències
         spanish_matches = len(words_set & spanish_keywords)
         catalan_matches = len(words_set & catalan_keywords)
         english_matches = len(words_set & english_keywords)
-        
+
+        print(f"🔍 [DETECT] Keywords trobades: ca={catalan_matches}, es={spanish_matches}, en={english_matches} (mínim requerit: {min_keywords})")
+
+        # IMPORTANT: Només retornar idioma si hi ha suficients keywords
+        max_matches = max(catalan_matches, spanish_matches, english_matches)
+
+        if max_matches < min_keywords:
+            print(f"⚠️ [DETECT] Text massa curt o sense keywords clares - no es pot determinar idioma amb seguretat")
+            return None
+
         # Retornar idioma amb més coincidències
         if catalan_matches > spanish_matches and catalan_matches > english_matches:
+            print(f"✅ [DETECT] Idioma detectat: ca (amb {catalan_matches} keywords)")
             return 'ca'
         elif spanish_matches > english_matches:
+            print(f"✅ [DETECT] Idioma detectat: es (amb {spanish_matches} keywords)")
             return 'es'
         elif english_matches > 0:
+            print(f"✅ [DETECT] Idioma detectat: en (amb {english_matches} keywords)")
             return 'en'
-        
-        # Si no hi ha coincidències clares, usar langdetect
-        detected = detect(text_lower)
-        
-        # Corregir falsos positius comuns
-        if detected in ['cy', 'tr', 'it', 'pt']:
-            return 'es'
-        
-        return detected
-        
-    except LangDetectException:
-        return 'es'
+
+        # Si no hi ha coincidències clares, NO usar langdetect (massa poc fiable amb textos curts)
+        print(f"⚠️ [DETECT] No s'han trobat keywords suficients - no es pot determinar idioma")
+        return None
+
+    except Exception as e:
+        print(f"❌ [DETECT] Error detectant idioma: {e}")
+        return None
 
 def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
@@ -134,16 +146,22 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
             language = 'ca'  # Per defecte català
             print(f"🔒 [LANG] Estat actiu - usant idioma per defecte temporal: {language}")
         elif message_count == 0:
-            # Primer missatge: detectar i guardar IMMEDIATAMENT a BD i cache
-            # Això evita problemes si el cache es perd entre missatges
-            language = detect_language(message)
-            LANGUAGE_CACHE[phone] = language  # Guardar en cache
-            print(f"👋 Primer missatge → Idioma detectat: {language}")
-            try:
-                appointment_manager.save_customer_language(phone, language)
-                print(f"✅ [LANG] Idioma guardat a BD: {language}")
-            except Exception as e:
-                print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
+            # Primer missatge: detectar i guardar NOMÉS si la detecció és segura
+            detected_lang = detect_language(message, min_keywords=2)
+            if detected_lang:
+                # Detecció segura amb suficients keywords
+                language = detected_lang
+                LANGUAGE_CACHE[phone] = language  # Guardar en cache
+                print(f"👋 Primer missatge → Idioma detectat amb seguretat: {language}")
+                try:
+                    appointment_manager.save_customer_language(phone, language)
+                    print(f"✅ [LANG] Idioma guardat a BD: {language}")
+                except Exception as e:
+                    print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
+            else:
+                # No hi ha prou evidència - usar per defecte SENSE guardar
+                language = 'ca'  # Per defecte català
+                print(f"⚠️ [LANG] Primer missatge sense keywords suficients - usant català per defecte (NO guardat)")
         else:
             # A partir del segon missatge: usar per defecte (no hauria d'arribar aquí normalment)
             # Si arribem aquí vol dir que cache i BD han fallat
