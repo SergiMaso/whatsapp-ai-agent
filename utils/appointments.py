@@ -422,12 +422,12 @@ class AppointmentManager:
 
                 excess = total_capacity - num_people
 
-                # Si excess=0, hem trobat la combinació perfecta! PARAR
-                if excess == 0:
+                # Si excess<=1, hem trobat una combinació excel·lent! PARAR
+                if excess <= 1:
                     best_2_tables = combo
-                    best_2_excess = 0
+                    best_2_excess = excess
                     table_nums = '+'.join(str(t[1]) for t in combo)
-                    print(f"✅ [FIND_TABLES] Combinació perfecta de 2 trobada: {table_nums} (cap. {total_capacity}, excess: 0)")
+                    print(f"✅ [FIND_TABLES] Combinació excel·lent de 2 trobada: {table_nums} (cap. {total_capacity}, excess: {excess})")
                     break  # EARLY EXIT!
 
                 # Guardar si és la millor fins ara
@@ -435,8 +435,8 @@ class AppointmentManager:
                     best_2_tables = combo
                     best_2_excess = excess
 
-            # Si tenim combinació de 2 amb excess<=2, retornar-la (prou bona!)
-            if best_2_tables and best_2_excess <= 2:
+            # Si tenim combinació de 2 amb excess<=1, retornar-la (excel·lent!)
+            if best_2_tables and best_2_excess <= 1:
                 tables_list = [
                     {'id': t[0], 'number': t[1], 'capacity': t[2]}
                     for t in best_2_tables
@@ -470,12 +470,12 @@ class AppointmentManager:
 
                 excess = total_capacity - num_people
 
-                # Si excess=0, hem trobat la combinació perfecta! PARAR
-                if excess == 0:
+                # Si excess<=1, hem trobat una combinació excel·lent! PARAR
+                if excess <= 1:
                     best_3_tables = combo
-                    best_3_excess = 0
+                    best_3_excess = excess
                     table_nums = '+'.join(str(t[1]) for t in combo)
-                    print(f"✅ [FIND_TABLES] Combinació perfecta de 3 trobada: {table_nums} (cap. {total_capacity}, excess: 0)")
+                    print(f"✅ [FIND_TABLES] Combinació excel·lent de 3 trobada: {table_nums} (cap. {total_capacity}, excess: {excess})")
                     break  # EARLY EXIT!
 
                 # Guardar si és la millor fins ara
