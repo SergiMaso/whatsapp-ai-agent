@@ -605,18 +605,19 @@ class AppointmentManager:
                 print(f"🔄 [FIND SLOT] Ajustant a: {requested_datetime}")
             
             # Buscar en el dia sol·licitat primer
-            slot = self._find_slot_on_date(requested_date, requested_time, num_people, now)
+            slot = self._find_slot_on_date(requested_date, requested_time, num_people, now, requested_date, requested_time)
             if slot:
                 return slot
-            
+
             # Si no hi ha disponibilitat aquell dia, buscar en els propers dies
             print(f"🔍 [FIND SLOT] No hi ha disponibilitat el {requested_date}, buscant en dies següents...")
-            
+
             for days_ahead in range(1, max_days_ahead + 1):
                 next_date = (datetime.strptime(requested_date, "%Y-%m-%d") + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
-                
+
                 # Buscar a partir de la mateixa hora sol·licitada
-                slot = self._find_slot_on_date(next_date, requested_time, num_people, now)
+                # IMPORTANT: Passar la data/hora ORIGINAL per determinar correctament is_requested
+                slot = self._find_slot_on_date(next_date, requested_time, num_people, now, requested_date, requested_time)
                 if slot:
                     return slot
             
@@ -629,10 +630,18 @@ class AppointmentManager:
             traceback.print_exc()
             return None
 
-    def _find_slot_on_date(self, date, start_time, num_people, now):
+    def _find_slot_on_date(self, date, start_time, num_people, now, original_requested_date, original_requested_time):
         """
         Buscar un slot disponible en una data específica
         Prova primer l'hora sol·licitada, després busca altres hores disponibles
+
+        Args:
+            date: Data a comprovar
+            start_time: Hora a partir de la qual començar a buscar
+            num_people: Nombre de persones
+            now: Datetime actual
+            original_requested_date: Data originalment sol·licitada per l'usuari
+            original_requested_time: Hora originalment sol·licitada per l'usuari
 
         Retorna el primer slot disponible o None
         """
@@ -744,14 +753,22 @@ class AppointmentManager:
                 tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
 
                 if tables_result:
-                    is_requested = (check_time == start_time)
+                    # IMPORTANT: Comprovar que TANT la data COM l'hora coincideixin amb la sol·licitud original
+                    is_requested = (date == original_requested_date and check_time == original_requested_time)
                     print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
+
+                    reason = None
+                    if not is_requested:
+                        if date != original_requested_date:
+                            reason = f"El restaurant està tancat el {original_requested_date}"
+                        else:
+                            reason = f"L'hora sol·licitada ({original_requested_time}) no està disponible"
 
                     return {
                         'date': date,
                         'time': check_time,
                         'is_requested': is_requested,
-                        'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
+                        'reason': reason
                     }
                 else:
                     print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
