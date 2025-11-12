@@ -458,25 +458,24 @@ class AppointmentManager:
         """
         Verifica si una combinació de taules és vàlida segons els pairings
 
-        REGLES FLEXIBLES:
+        REGLES ESTRICTES:
         1. Si només 1 taula: sempre vàlid
-        2. Si cap taula té pairing: VÀLID (es poden combinar lliurement)
-        3. Si ALGUNA taula té pairing: verificar que estan connectades
+        2. Si múltiples taules: TOTES han de tenir pairing definit i estar connectades
         """
         # Si només hi ha 1 taula, sempre és vàlid
         if len(tables_combo) == 1:
             return True
 
-        # Comprovar si alguna taula té pairing definit
-        tables_with_pairing = [t for t in tables_combo if t[3] is not None]
+        # Per múltiples taules: TOTES han de tenir pairing definit
+        tables_without_pairing = [t for t in tables_combo if t[3] is None or not t[3]]
 
-        # Si CAP taula té pairing, es poden combinar lliurement
-        if not tables_with_pairing:
-            table_nums = '+'.join(str(t[1]) for t in tables_combo)
-            print(f"✅ [PAIRING] Combinació {table_nums} permesa (taules sense pairing, combinació lliure)")
-            return True
+        if tables_without_pairing:
+            table_nums_without = [str(t[1]) for t in tables_without_pairing]
+            combo_nums = '+'.join(str(t[1]) for t in tables_combo)
+            print(f"⚠️  [PAIRING] Combinació {combo_nums} descartada (taules {'+'.join(table_nums_without)} no tenen pairing definit)")
+            return False
 
-        # Si ALGUNA taula té pairing, verificar que estan totes connectades
+        # Verificar que totes les taules estan connectades per pairing
         # Convertir a diccionari per accés ràpid
         tables_dict = {t[1]: t for t in tables_combo}  # table_number -> table
         table_numbers = set(tables_dict.keys())
@@ -504,7 +503,10 @@ class AppointmentManager:
         # Si hem visitat totes les taules de la combinació, és vàlida
         is_valid = len(visited) == len(tables_combo)
 
-        if not is_valid:
+        if is_valid:
+            table_nums = '+'.join(str(t[1]) for t in tables_combo)
+            print(f"✅ [PAIRING] Combinació {table_nums} vàlida (totes amb pairing i connectades)")
+        else:
             table_nums = '+'.join(str(t[1]) for t in tables_combo)
             print(f"⚠️  [PAIRING] Combinació {table_nums} descartada (taules amb pairing no connectades)")
 
