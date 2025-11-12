@@ -104,6 +104,18 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     except Exception as e:
         print(f"⚠️ Error obtenint idioma de BD (usant cache): {e}")
 
+    # IMPORTANT: Comprovar si hi ha estat actiu abans de detectar idioma
+    # Si l'usuari està en WAITING_NOTES o WAITING_MENU, NO detectar/actualitzar idioma
+    has_active_state = False
+    temp_history = conversation_manager.get_history(phone, limit=5)
+    for msg in reversed(temp_history):
+        if msg['role'] == 'system' and (msg['content'].startswith('WAITING_NOTES:') or
+                                        msg['content'].startswith('WAITING_MENU:') or
+                                        msg['content'].startswith('WAITING_CONFIRMATION:')):
+            has_active_state = True
+            print(f"🔒 [LANG] Estat actiu detectat - NO actualitzarem l'idioma")
+            break
+
     message_count = conversation_manager.get_message_count(phone)
     print(f"🔍 [LANG DEBUG] Nombre de missatges: {message_count}")
 
@@ -116,14 +128,18 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         language = cached_language
         print(f"💾 Idioma des de cache (BD no disponible): {language}")
     else:
-        # Client nou: detectar idioma
-        if message_count == 0:
+        # Client nou: detectar idioma (només si NO hi ha estat actiu I si encara no està guardat)
+        if has_active_state:
+            # Si hi ha estat actiu, usar idioma per defecte sense guardar-lo
+            language = 'ca'  # Per defecte català
+            print(f"🔒 [LANG] Estat actiu - usant idioma per defecte temporal: {language}")
+        elif message_count == 0:
             # Primer missatge: detectar però NO guardar encara
             language = detect_language(message)
             LANGUAGE_CACHE[phone] = language  # Guardar en cache
             print(f"👋 Primer missatge → Idioma detectat (temporal, no guardat): {language}")
-        elif message_count == 1:
-            # Segon missatge: ara sí que el guardem!
+        elif message_count == 1 and not has_active_state:
+            # Segon missatge: ara sí que el guardem (només si no hi ha estat actiu)
             new_language = detect_language(message)
             print(f"🔍 [LANG DEBUG] Segon missatge - Idioma detectat: {new_language}")
             try:
