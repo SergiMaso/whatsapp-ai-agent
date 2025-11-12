@@ -17,6 +17,7 @@ from utils.elevenlabs_agent import elevenlabs_manager
 import logging
 from twilio.twiml.voice_response import VoiceResponse
 import time
+import threading
 
 # Imports per autenticació
 from flask_login import login_required, current_user
@@ -116,6 +117,88 @@ weekly_defaults_manager = WeeklyDefaultsManager()
 media_manager = MediaManager()
 voice_handler = VoiceHandler()
 
+# === LOCKS PER ÀUDIOS ASYNC ===
+# Diccionari de locks per telèfon per evitar race conditions amb àudios
+client_audio_locks = {}
+locks_dict_lock = threading.Lock()  # Lock per modificar el diccionari de locks
+
+def get_client_audio_lock(phone):
+    """Obté o crea un lock per aquest telèfon (per àudios)"""
+    with locks_dict_lock:
+        if phone not in client_audio_locks:
+            client_audio_locks[phone] = threading.Lock()
+        return client_audio_locks[phone]
+
+def process_audio_async(media_url, from_number, to_number, auth_header):
+    """
+    Processa àudio en background amb LOCK per client.
+    Només 1 àudio a la vegada per client per evitar race conditions.
+    """
+    # CRÍTICO: Obtenir lock d'aquest client
+    client_lock = get_client_audio_lock(from_number)
+
+    # Si hi ha un altre àudio processant, ESPERA aquí
+    with client_lock:
+        try:
+            start_time = time.time()
+            print(f"🔄 [AUDIO ASYNC] Processant àudio per {from_number}")
+
+            # 1. Transcriure àudio
+            print(f"🎤 [AUDIO ASYNC] Transcribint...")
+            transcribe_start = time.time()
+            transcribed_text = transcribe_audio(media_url, auth_header)
+            transcribe_time = time.time() - transcribe_start
+            print(f"⏱️  [AUDIO ASYNC] Transcription took {transcribe_time:.2f}s")
+
+            if not transcribed_text:
+                print(f"❌ [AUDIO ASYNC] No s'ha pogut transcriure")
+                twilio_client.messages.create(
+                    body="No he pogut entendre l'àudio. Pots escriure el missatge?",
+                    from_=to_number,
+                    to=from_number
+                )
+                return
+
+            print(f"📝 [AUDIO ASYNC] Transcrit: {transcribed_text}")
+
+            # 2. Processar amb IA
+            print(f"🤖 [AUDIO ASYNC] Processant amb IA...")
+            ai_start = time.time()
+            ai_response = process_message_with_ai(
+                transcribed_text,
+                from_number,
+                appointment_manager,
+                conversation_manager
+            )
+            ai_time = time.time() - ai_start
+            print(f"⏱️  [AUDIO ASYNC] AI processing took {ai_time:.2f}s")
+
+            # 3. Enviar resposta via Twilio API
+            print(f"📤 [AUDIO ASYNC] Enviant resposta: {ai_response[:100]}...")
+            message = twilio_client.messages.create(
+                body=ai_response,
+                from_=to_number,
+                to=from_number
+            )
+
+            total_time = time.time() - start_time
+            print(f"✅ [AUDIO ASYNC] Completat en {total_time:.2f}s (SID: {message.sid})")
+
+        except Exception as e:
+            print(f"❌ [AUDIO ASYNC] Error: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Intentar enviar missatge d'error
+            try:
+                twilio_client.messages.create(
+                    body="Ho sento, hi ha hagut un error processant l'àudio. Pots tornar-ho a intentar?",
+                    from_=to_number,
+                    to=from_number
+                )
+            except:
+                print(f"❌ [AUDIO ASYNC] No s'ha pogut enviar missatge d'error")
+
 # Configuració per pujada d'arxius
 UPLOAD_FOLDER = '/tmp/uploads'
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'}
@@ -147,6 +230,7 @@ def whatsapp_webhook():
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
+    to_number = request.values.get('To', '')
 
     print(f"📱 Mensaje WhatsApp de {from_number}: {incoming_msg}")
     print(f"⏱️  [TIMING] Webhook started at {time.strftime('%H:%M:%S')}")
@@ -154,32 +238,49 @@ def whatsapp_webhook():
     resp = MessagingResponse()
 
     try:
-        # Si hay audio, transcribirlo
+        # === ÀUDIO: PROCESSAR ASYNC ===
         if media_url:
-            print(f"🎤 Transcribiendo audio...")
-            transcribe_start = time.time()
+            print(f"🎤 Àudio detectat - processament async")
+
+            # Obtenir idioma de l'usuari per la resposta
+            try:
+                saved_language = appointment_manager.get_customer_language(from_number)
+            except:
+                saved_language = None
+
+            language = saved_language or 'ca'  # Per defecte català
+
+            # Missatge immediat segons idioma
+            listening_messages = {
+                'ca': '🎤 Escoltant...',
+                'es': '🎤 Escuchando...',
+                'en': '🎤 Listening...'
+            }
+            resp.message(listening_messages.get(language, listening_messages['ca']))
+
+            # Llançar processament en background AMB LOCK
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
             auth_header = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
 
-            transcribed_text = transcribe_audio(media_url, auth_header)
-            transcribe_time = time.time() - transcribe_start
-            print(f"⏱️  [TIMING] Transcription took {transcribe_time:.2f}s")
+            thread = threading.Thread(
+                target=process_audio_async,
+                args=(media_url, from_number, to_number, auth_header)
+            )
+            thread.daemon = True
+            thread.start()
 
-            if transcribed_text:
-                print(f"📝 Audio transcrito: {transcribed_text}")
-                incoming_msg = transcribed_text
-            else:
-                resp.message("No pude entender el audio. ¿Puedes escribir tu mensaje?")
-                print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
-                return str(resp)
+            print(f"✅ [AUDIO] Resposta immediata enviada, processant en background")
+            print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
+            return str(resp)
 
+        # === TEXT: PROCESSAR SÍNCRON ===
         if not incoming_msg:
             resp.message("Hola! Escribe o envía un mensaje de voz para hacer una reserva.")
             print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
             return str(resp)
 
-        # Procesar con IA
-        print(f"🤖 Procesando con IA...")
+        # Procesar con IA (síncron per missatges de text)
+        print(f"🤖 Procesando con IA (síncron)...")
         ai_start = time.time()
         ai_response = process_message_with_ai(
             incoming_msg,
