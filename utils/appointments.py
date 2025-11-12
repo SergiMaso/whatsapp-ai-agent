@@ -1032,8 +1032,11 @@ class AppointmentManager:
             }
 
 
-    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
+    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=None, notes=None):
         try:
+                    # Si no es passa duration_hours, obtenir-lo de la configuració
+            if duration_hours is None:
+                duration_hours = config.get_float('default_booking_duration_hours', 1.5)
             # Parsejar la data/hora com a NAIVE
             naive_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
             print(f"🕐 [TIMEZONE DEBUG] Input rebut: date={date}, time={time}")
