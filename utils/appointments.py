@@ -1305,6 +1305,64 @@ class AppointmentManager:
             traceback.print_exc()
             return False
 
+    def get_available_time_slots(self, date_str, num_people=1):
+        """
+        Retorna els time slots disponibles per una data donada.
+
+        Args:
+            date_str: Data en format "YYYY-MM-DD"
+            num_people: Nombre de persones (per defecte 1, ja que només volem saber els slots de temps)
+
+        Returns:
+            List de strings amb les hores disponibles (ex: ["20:00", "22:00"])
+            o llista buida si no hi ha configuració de slots fixos
+        """
+        try:
+            time_slots_mode = config.get_str('time_slots_mode', 'interval')
+            time_slots = config.get_time_slots()
+
+            if time_slots_mode == 'fixed':
+                # Retornar només els slots fixos configurats
+                available = []
+                for slot in time_slots:
+                    if slot['name'] == 'lunch':
+                        fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                    else:  # dinner
+                        fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                    available.extend(fixed_times)
+
+                print(f"ℹ️  [GET SLOTS] Mode fixed - Slots disponibles: {available}")
+                return sorted(set(available))  # Eliminar duplicats i ordenar
+
+            elif time_slots_mode == 'interval':
+                # En mode interval, retornar els intervals dins dels slots de servei
+                time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+                available = []
+
+                for slot in time_slots:
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                    # Generar tots els intervals possibles
+                    for minutes in range(slot_start_minutes, slot_end_minutes + 1, time_slot_interval):
+                        hour = minutes // 60
+                        minute = minutes % 60
+                        available.append(f"{hour:02d}:{minute:02d}")
+
+                print(f"ℹ️  [GET SLOTS] Mode interval - Slots disponibles: {available}")
+                return available
+
+            return []
+
+        except Exception as e:
+            print(f"❌ Error obtenint time slots: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
     def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_table_ids=None):
         try:
             with self.get_db_connection() as conn:

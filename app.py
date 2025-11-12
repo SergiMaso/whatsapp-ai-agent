@@ -2725,11 +2725,36 @@ def elevenlabs_update_appointment():
                 'message': messages.get(language, messages['es'])
             }), 200
         else:
-            messages = {
-                'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles para los nuevos datos.",
-                'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles per les noves dades.",
-                'en': "Could not update the reservation. There might not be tables available for the new data."
-            }
+            # Si ha fallat l'actualització, obtenir els slots disponibles per oferir alternatives
+            target_date = new_date if new_date else date
+            available_slots = appointment_manager.get_available_time_slots(target_date)
+
+            if available_slots and new_time:
+                # Si hi ha slots disponibles i s'ha intentat canviar l'hora, informar de les opcions vàlides
+                from utils.ai_processor_voice import format_time_natural
+
+                # Formatar les hores de manera natural
+                slots_formatted = [format_time_natural(slot, language) for slot in available_slots]
+
+                if len(slots_formatted) == 1:
+                    slots_text = slots_formatted[0]
+                elif len(slots_formatted) == 2:
+                    slots_text = f"{slots_formatted[0]} o {slots_formatted[1]}" if language == 'es' else f"{slots_formatted[0]} o {slots_formatted[1]}"
+                else:
+                    slots_text = ", ".join(slots_formatted[:-1]) + f" o {slots_formatted[-1]}"
+
+                messages = {
+                    'es': f"Lo siento, la hora {format_time_natural(new_time, language)} no está disponible. Solo puedes reservar a las {slots_text}. ¿Cuál prefieres?",
+                    'ca': f"Ho sento, l'hora {format_time_natural(new_time, language)} no està disponible. Només pots reservar a les {slots_text}. Quina prefereixes?",
+                    'en': f"Sorry, {format_time_natural(new_time, language)} is not available. You can only book at {slots_text}. Which one do you prefer?"
+                }
+            else:
+                # Missatge genèric si no hi ha slots o no s'ha canviat l'hora
+                messages = {
+                    'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles para los nuevos datos.",
+                    'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles per les noves dades.",
+                    'en': "Could not update the reservation. There might not be tables available for the new data."
+                }
 
             logger.error(f"❌ [ELEVEN LABS UPDATE] Error actualitzant reserva {apt_id}")
 
