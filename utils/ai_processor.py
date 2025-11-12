@@ -11,9 +11,6 @@ from utils.media_manager import MediaManager
 from utils.config import config
 load_dotenv()
 
-# Cache d'idiomes en memòria per evitar canvis inesperats quan BD falla
-LANGUAGE_CACHE = {}
-
 def detect_language(text, min_keywords=2):
     """
     Detecta l'idioma del text comptant coincidències amb keywords
@@ -105,16 +102,14 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     print(f"📝 Missatge rebut: '{message}'")
 
     # --- STEP 1: Gestió de l'idioma ---
-    # PRIORITAT: Cache en memòria > Base de dades > Detecció automàtica
-    cached_language = LANGUAGE_CACHE.get(phone)
+    # PRIORITAT: Base de dades > Detecció automàtica
     saved_language = None
 
-    print(f"🔍 [LANG DEBUG] Idioma en cache: {cached_language}")
     try:
         saved_language = appointment_manager.get_customer_language(phone)
         print(f"🔍 [LANG DEBUG] Idioma des de BD: {saved_language}")
     except Exception as e:
-        print(f"⚠️ Error obtenint idioma de BD (usant cache): {e}")
+        print(f"⚠️ Error obtenint idioma de BD: {e}")
 
     # IMPORTANT: Comprovar si hi ha estat actiu abans de detectar idioma
     # Si l'usuari està en WAITING_NOTES o WAITING_MENU, NO detectar/actualitzar idioma
@@ -135,11 +130,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     if saved_language:
         # Client conegut: SEMPRE usar idioma de BD, sense excepcions
         language = saved_language
-        LANGUAGE_CACHE[phone] = language
         print(f"🌍 Client conegut - Idioma FIXAT de BD: {language} (no es canviarà)")
-    elif cached_language:
-        language = cached_language
-        print(f"💾 Idioma des de cache (BD no disponible): {language}")
     else:
         # Client nou: detectar idioma (només si NO hi ha estat actiu)
         if has_active_state:
@@ -152,22 +143,21 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
             if detected_lang:
                 # Detecció segura amb suficients keywords
                 language = detected_lang
-                LANGUAGE_CACHE[phone] = language  # Guardar en cache
                 print(f"👋 Primer missatge → Idioma detectat amb seguretat: {language}")
                 try:
                     appointment_manager.save_customer_language(phone, language)
                     print(f"✅ [LANG] Idioma guardat a BD: {language}")
                 except Exception as e:
-                    print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
+                    print(f"⚠️ Error guardant idioma a BD: {e}")
             else:
                 # No hi ha prou evidència - usar per defecte SENSE guardar
                 language = 'es'  # Per defecte espanyol
                 print(f"⚠️ [LANG] Primer missatge sense keywords suficients - usant espanyol per defecte (NO guardat)")
         else:
             # A partir del segon missatge: usar per defecte (no hauria d'arribar aquí normalment)
-            # Si arribem aquí vol dir que cache i BD han fallat
+            # Si arribem aquí vol dir que BD ha fallat
             language = 'es'  # Per defecte espanyol
-            print(f"⚠️ [LANG] No hi ha idioma guardat enlloc, usant per defecte: {language}")
+            print(f"⚠️ [LANG] No hi ha idioma guardat a BD, usant per defecte: {language}")
 
     print(f"✅ Idioma final: {language}")
 
