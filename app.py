@@ -1506,6 +1506,111 @@ def send_broadcast():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/send-message', methods=['POST'])
+@admin_required
+def send_individual_message():
+    """
+    📤 Enviar missatge individual a un client específic
+    
+    Body:
+    {
+        "phone": "+34600000000",
+        "message": "Hola, tenim una oferta especial avui!"
+    }
+    """
+    try:
+        data = request.json
+        
+        phone = data.get('phone')
+        message = data.get('message')
+        
+        if not phone or not message:
+            return jsonify({'error': 'El telèfon i el missatge són obligatoris'}), 400
+        
+        # Obtenir el client de la base de dades
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT name, language FROM customers WHERE phone = %s
+                """, (phone,))
+                result = cursor.fetchone()
+                
+                if not result:
+                    return jsonify({'error': 'Client no trobat'}), 404
+                
+                name = result[0]
+                language = result[1] or 'es'
+        
+        # Intentar enviar via WhatsApp/Telegram segons el prefix
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
+        
+        try:
+            # Si és un telèfon (sense prefix telegram:), enviar via WhatsApp
+            if not phone.startswith('telegram:'):
+                twilio_message = twilio_client.messages.create(
+                    from_=os.getenv('TWILIO_WHATSAPP_NUMBER'),
+                    body=message,
+                    to=f'whatsapp:{clean_phone}'
+                )
+                
+                # Guardar el missatge a conversations
+                with appointment_manager.get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO conversations (phone, role, content)
+                            VALUES (%s, %s, %s)
+                        """, (phone, 'assistant', message))
+                        conn.commit()
+                
+                print(f"✅ WhatsApp enviat a {name} ({phone})")
+                return jsonify({
+                    'success': True,
+                    'message': 'Missatge enviat correctament',
+                    'channel': 'whatsapp',
+                    'phone': phone,
+                    'name': name
+                }), 200
+            
+            # Si té prefix telegram:, enviar via Telegram
+            else:
+                telegram_chat_id = clean_phone
+                telegram_bot.send_message(
+                    chat_id=telegram_chat_id,
+                    text=message,
+                    parse_mode='Markdown'
+                )
+                
+                # Guardar el missatge a conversations
+                with appointment_manager.get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO conversations (phone, role, content)
+                            VALUES (%s, %s, %s)
+                        """, (phone, 'assistant', message))
+                        conn.commit()
+                
+                print(f"✅ Telegram enviat a {name} ({phone})")
+                return jsonify({
+                    'success': True,
+                    'message': 'Missatge enviat correctament',
+                    'channel': 'telegram',
+                    'phone': phone,
+                    'name': name
+                }), 200
+                
+        except Exception as e:
+            print(f"❌ Error enviant missatge a {phone}: {e}")
+            return jsonify({
+                'error': f'Error enviant el missatge: {str(e)}'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error en send_individual_message: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/broadcast/preview', methods=['POST'])
 def preview_broadcast():
     """👁️ Previsualitzar destinataris del missatge difús"""
