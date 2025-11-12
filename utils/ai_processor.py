@@ -131,11 +131,33 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     message_count = conversation_manager.get_message_count(phone)
     print(f"🔍 [LANG DEBUG] Nombre de missatges: {message_count}")
 
-    # Si hi ha idioma guardat en BD o cache, SEMPRE usar-lo (no canviar mai)
+    # Lògica d'idioma: només canviar si hi ha keywords clares, sinó mantenir BD
     if saved_language:
+        # Client conegut: mantenir idioma de BD per defecte
         language = saved_language
-        LANGUAGE_CACHE[phone] = language  # Actualitzar cache
-        print(f"🌍 Client conegut - Idioma mantingut: {language} (des de BD)")
+        LANGUAGE_CACHE[phone] = language
+        print(f"🌍 Client conegut - Idioma de BD: {language}")
+
+        # PERÒ permetre canvi només si:
+        # 1. NO hi ha estat actiu (WAITING_NOTES, etc.)
+        # 2. Hi ha prou keywords (mínim 3 per ser conservador)
+        # 3. L'idioma detectat és diferent del guardat
+        if not has_active_state:
+            detected_lang = detect_language(message, min_keywords=3)
+            if detected_lang and detected_lang != saved_language:
+                # Canviar idioma només amb detecció MOLT segura
+                language = detected_lang
+                LANGUAGE_CACHE[phone] = language
+                print(f"🔄 [LANG] Idioma canviat per keywords: {saved_language} → {language}")
+                try:
+                    appointment_manager.save_customer_language(phone, language)
+                    print(f"✅ [LANG] Nou idioma guardat a BD: {language}")
+                except Exception as e:
+                    print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
+            else:
+                print(f"🔒 [LANG] Sense keywords suficients per canviar - mantingut: {language}")
+        else:
+            print(f"🔒 [LANG] Estat actiu - idioma mantingut: {language}")
     elif cached_language:
         language = cached_language
         print(f"💾 Idioma des de cache (BD no disponible): {language}")
@@ -143,7 +165,7 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         # Client nou: detectar idioma (només si NO hi ha estat actiu)
         if has_active_state:
             # Si hi ha estat actiu, usar idioma per defecte sense guardar-lo
-            language = 'ca'  # Per defecte català
+            language = 'es'  # Per defecte espanyol
             print(f"🔒 [LANG] Estat actiu - usant idioma per defecte temporal: {language}")
         elif message_count == 0:
             # Primer missatge: detectar i guardar NOMÉS si la detecció és segura
@@ -160,12 +182,12 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
                     print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
             else:
                 # No hi ha prou evidència - usar per defecte SENSE guardar
-                language = 'ca'  # Per defecte català
-                print(f"⚠️ [LANG] Primer missatge sense keywords suficients - usant català per defecte (NO guardat)")
+                language = 'es'  # Per defecte espanyol
+                print(f"⚠️ [LANG] Primer missatge sense keywords suficients - usant espanyol per defecte (NO guardat)")
         else:
             # A partir del segon missatge: usar per defecte (no hauria d'arribar aquí normalment)
             # Si arribem aquí vol dir que cache i BD han fallat
-            language = 'ca'  # Per defecte català
+            language = 'es'  # Per defecte espanyol
             print(f"⚠️ [LANG] No hi ha idioma guardat enlloc, usant per defecte: {language}")
 
     print(f"✅ Idioma final: {language}")

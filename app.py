@@ -248,7 +248,7 @@ def whatsapp_webhook():
             except:
                 saved_language = None
 
-            language = saved_language or 'ca'  # Per defecte català
+            language = saved_language or 'es'  # Per defecte espanyol
 
             # Missatge immediat segons idioma
             listening_messages = {
@@ -856,16 +856,17 @@ def delete_table(table_id):
                 table_number = result[0]
                 pairing = result[1] if result[1] else []
 
-                # Verificar reserves futures (ara amb table_ids array)
+                # Verificar si hi ha QUALSEVOL reserva que referencii aquesta taula
+                # (futures o passades, confirmades o no) per evitar foreign key constraint error
                 cursor.execute("""
                     SELECT COUNT(*) FROM appointments
-                    WHERE %s = ANY(table_ids) AND status = 'confirmed' AND date >= CURRENT_DATE
+                    WHERE %s = ANY(table_ids)
                 """, (table_id,))
 
                 count = cursor.fetchone()[0]
 
                 if count > 0:
-                    return jsonify({'error': f'No es pot eliminar. La taula té {count} reserves futures'}), 409
+                    return jsonify({'error': f'No es pot eliminar. La taula té {count} reserves associades (futures o passades). Elimina primer les reserves.'}), 409
 
                 # ELIMINAR referències d'aquesta taula en el pairing d'altres taules
                 for paired_table_num in pairing:
