@@ -180,8 +180,22 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = f"telegram:{update.effective_user.id}"
     
     print(f"\n🎤 [USUARI] Missatge de veu rebut")
-    
-    await update.message.reply_text("🎤 Escoltant...")
+
+    # Obtenir idioma de l'usuari per la resposta
+    try:
+        saved_language = appointment_manager.get_customer_language(user_id)
+    except:
+        saved_language = None
+
+    language = saved_language or 'es'  # Per defecte espanyol
+
+    listening_messages = {
+        'ca': '🎤 Escoltant...',
+        'es': '🎤 Escuchando...',
+        'en': '🎤 Listening...'
+    }
+
+    await update.message.reply_text(listening_messages.get(language, listening_messages['es']))
     
     try:
         # Descargar el archivo de audio
@@ -209,7 +223,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language="ca"  # Català per defecte
+                language="es"  # Espanyol per defecte
             )
         
         transcribed_text = transcript.text

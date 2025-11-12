@@ -256,7 +256,7 @@ def whatsapp_webhook():
                 'es': '🎤 Escuchando...',
                 'en': '🎤 Listening...'
             }
-            resp.message(listening_messages.get(language, listening_messages['ca']))
+            resp.message(listening_messages.get(language, listening_messages['es']))
 
             # Llançar processament en background AMB LOCK
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
@@ -856,17 +856,23 @@ def delete_table(table_id):
                 table_number = result[0]
                 pairing = result[1] if result[1] else []
 
-                # Verificar si hi ha QUALSEVOL reserva que referencii aquesta taula
-                # (futures o passades, confirmades o no) per evitar foreign key constraint error
+                # Verificar només reserves FUTURES
                 cursor.execute("""
                     SELECT COUNT(*) FROM appointments
-                    WHERE %s = ANY(table_ids)
+                    WHERE %s = ANY(table_ids) AND date >= CURRENT_DATE
                 """, (table_id,))
 
-                count = cursor.fetchone()[0]
+                future_count = cursor.fetchone()[0]
 
-                if count > 0:
-                    return jsonify({'error': f'No es pot eliminar. La taula té {count} reserves associades (futures o passades). Elimina primer les reserves.'}), 409
+                if future_count > 0:
+                    return jsonify({'error': f'No es pot eliminar. La taula té {future_count} reserves futures. Cancel·la primer les reserves.'}), 409
+
+                # Si hi ha reserves antigues, eliminar-les de la taula abans d'eliminar-la
+                cursor.execute("""
+                    UPDATE appointments
+                    SET table_ids = array_remove(table_ids, %s)
+                    WHERE %s = ANY(table_ids) AND date < CURRENT_DATE
+                """, (table_id, table_id))
 
                 # ELIMINAR referències d'aquesta taula en el pairing d'altres taules
                 for paired_table_num in pairing:
