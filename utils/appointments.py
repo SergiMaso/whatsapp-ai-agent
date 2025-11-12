@@ -392,60 +392,113 @@ class AppointmentManager:
             # ===================================================================
             print(f"⚠️  [FIND_TABLES] Cap taula individual per {num_people} persones, buscant combinacions...")
 
-            # Generar TOTES les combinacions possibles (fins a 4 taules)
             from itertools import combinations
 
-            best_combination = None
-            best_score = (999, 999)  # (num_tables, excess_capacity) - inicialitzar com a tupla
+            # PRE-FILTRAR: Només taules amb pairing definit (les que es poden combinar)
+            tables_with_pairing = [t for t in all_tables if t[3] is not None and t[3]]
 
-            # Provar combinacions de 2, 3, i 4 taules
-            for combo_size in [2, 3, 4]:
-                for combo in combinations(all_tables, combo_size):
-                    # Comprovar si aquesta combinació és vàlida (pairing)
-                    if not self._is_valid_combination(combo):
-                        continue
+            if not tables_with_pairing:
+                print(f"❌ [FIND_TABLES] No hi ha taules amb pairing definit per combinar")
+                return None
 
-                    # Calcular capacitat total
-                    total_capacity = sum(t[2] for t in combo)
+            print(f"🔍 [FIND_TABLES] Pre-filtrat: {len(tables_with_pairing)} taules amb pairing (de {len(all_tables)} totals)")
 
-                    # Si no és suficient, descartar
-                    if total_capacity < num_people:
-                        continue
+            # ===================================================================
+            # FASE 2.1: COMBINACIONS DE 2 TAULES
+            # ===================================================================
+            best_2_tables = None
+            best_2_excess = 999
 
-                    # Calcular excedent
-                    excess = total_capacity - num_people
+            for combo in combinations(tables_with_pairing, 2):
+                # Validar pairing (han d'estar connectades)
+                if not self._is_valid_combination(combo):
+                    continue
 
-                    # Calcular score: prioritzar mínim nombre de taules, després mínim excedent
-                    score = (combo_size, excess)
+                total_capacity = sum(t[2] for t in combo)
 
-                    # Si és millor, guardar
-                    if score < best_score:
-                        best_score = score
-                        best_combination = combo
+                # Si no és suficient, descartar
+                if total_capacity < num_people:
+                    continue
 
-                        # Mostrar millor combinació trobada fins ara
-                        table_nums = '+'.join(str(t[1]) for t in combo)
-                        print(f"✅ [FIND_TABLES] Nova millor combinació: {table_nums} ({combo_size} taules, cap. {total_capacity}, excedent: {excess})")
+                excess = total_capacity - num_people
 
-            # Si hem trobat una combinació, retornar-la
-            if best_combination:
+                # Si excess=0, hem trobat la combinació perfecta! PARAR
+                if excess == 0:
+                    best_2_tables = combo
+                    best_2_excess = 0
+                    table_nums = '+'.join(str(t[1]) for t in combo)
+                    print(f"✅ [FIND_TABLES] Combinació perfecta de 2 trobada: {table_nums} (cap. {total_capacity}, excess: 0)")
+                    break  # EARLY EXIT!
+
+                # Guardar si és la millor fins ara
+                if excess < best_2_excess:
+                    best_2_tables = combo
+                    best_2_excess = excess
+
+            # Si tenim combinació de 2 amb excess<=2, retornar-la (prou bona!)
+            if best_2_tables and best_2_excess <= 2:
                 tables_list = [
                     {'id': t[0], 'number': t[1], 'capacity': t[2]}
-                    for t in best_combination
+                    for t in best_2_tables
                 ]
-                total_cap = sum(t[2] for t in best_combination)
-                excess = total_cap - num_people
-
+                total_cap = sum(t[2] for t in best_2_tables)
                 table_numbers = '+'.join(str(t['number']) for t in tables_list)
-                print(f"✅ [FIND_TABLES] Combinació final: Taules {table_numbers} ({len(tables_list)} taules, cap. {total_cap}, excedent: {excess})")
-
+                print(f"✅ [FIND_TABLES] Combinació de 2 acceptada: {table_numbers} (cap. {total_cap}, excess: {best_2_excess})")
                 return {
                     'tables': tables_list,
                     'total_capacity': total_cap
                 }
 
-            # No s'ha trobat cap solució
-            print(f"❌ [FIND_TABLES] No s'ha trobat cap taula o combinació per {num_people} persones")
+            # ===================================================================
+            # FASE 2.2: COMBINACIONS DE 3 TAULES (només si no hem trobat res bo amb 2)
+            # ===================================================================
+            print(f"🔍 [FIND_TABLES] No hi ha combinació de 2 acceptable (millor excess: {best_2_excess}), buscant 3 taules...")
+
+            best_3_tables = None
+            best_3_excess = 999
+
+            for combo in combinations(tables_with_pairing, 3):
+                # Validar pairing (han d'estar connectades)
+                if not self._is_valid_combination(combo):
+                    continue
+
+                total_capacity = sum(t[2] for t in combo)
+
+                # Si no és suficient, descartar
+                if total_capacity < num_people:
+                    continue
+
+                excess = total_capacity - num_people
+
+                # Si excess=0, hem trobat la combinació perfecta! PARAR
+                if excess == 0:
+                    best_3_tables = combo
+                    best_3_excess = 0
+                    table_nums = '+'.join(str(t[1]) for t in combo)
+                    print(f"✅ [FIND_TABLES] Combinació perfecta de 3 trobada: {table_nums} (cap. {total_capacity}, excess: 0)")
+                    break  # EARLY EXIT!
+
+                # Guardar si és la millor fins ara
+                if excess < best_3_excess:
+                    best_3_tables = combo
+                    best_3_excess = excess
+
+            # Si tenim combinació de 3, retornar-la (la millor possible)
+            if best_3_tables:
+                tables_list = [
+                    {'id': t[0], 'number': t[1], 'capacity': t[2]}
+                    for t in best_3_tables
+                ]
+                total_cap = sum(t[2] for t in best_3_tables)
+                table_numbers = '+'.join(str(t['number']) for t in tables_list)
+                print(f"✅ [FIND_TABLES] Combinació de 3 acceptada: {table_numbers} (cap. {total_cap}, excess: {best_3_excess})")
+                return {
+                    'tables': tables_list,
+                    'total_capacity': total_cap
+                }
+
+            # NO buscar combinacions de 4 - si no hem trobat res amb 2 o 3, no hi ha solució
+            print(f"❌ [FIND_TABLES] No s'ha trobat cap combinació vàlida de 2 o 3 taules per {num_people} persones")
             return None
 
         except Exception as e:
