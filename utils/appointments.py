@@ -470,9 +470,7 @@ class AppointmentManager:
         tables_without_pairing = [t for t in tables_combo if t[3] is None or not t[3]]
 
         if tables_without_pairing:
-            table_nums_without = [str(t[1]) for t in tables_without_pairing]
-            combo_nums = '+'.join(str(t[1]) for t in tables_combo)
-            print(f"⚠️  [PAIRING] Combinació {combo_nums} descartada (taules {'+'.join(table_nums_without)} no tenen pairing definit)")
+            # Log eliminat per evitar saturació (massa combinacions)
             return False
 
         # Verificar que totes les taules estan connectades per pairing
@@ -503,12 +501,7 @@ class AppointmentManager:
         # Si hem visitat totes les taules de la combinació, és vàlida
         is_valid = len(visited) == len(tables_combo)
 
-        if is_valid:
-            table_nums = '+'.join(str(t[1]) for t in tables_combo)
-            print(f"✅ [PAIRING] Combinació {table_nums} vàlida (totes amb pairing i connectades)")
-        else:
-            table_nums = '+'.join(str(t[1]) for t in tables_combo)
-            print(f"⚠️  [PAIRING] Combinació {table_nums} descartada (taules amb pairing no connectades)")
+        # Log eliminat per evitar saturació (massa combinacions)
 
         return is_valid
     
