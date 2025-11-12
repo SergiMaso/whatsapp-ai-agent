@@ -97,18 +97,21 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     cached_language = LANGUAGE_CACHE.get(phone)
     saved_language = None
 
+    print(f"🔍 [LANG DEBUG] Idioma en cache: {cached_language}")
     try:
         saved_language = appointment_manager.get_customer_language(phone)
+        print(f"🔍 [LANG DEBUG] Idioma des de BD: {saved_language}")
     except Exception as e:
         print(f"⚠️ Error obtenint idioma de BD (usant cache): {e}")
 
     message_count = conversation_manager.get_message_count(phone)
+    print(f"🔍 [LANG DEBUG] Nombre de missatges: {message_count}")
 
     # Si hi ha idioma guardat en BD o cache, SEMPRE usar-lo (no canviar mai)
     if saved_language:
         language = saved_language
         LANGUAGE_CACHE[phone] = language  # Actualitzar cache
-        print(f"🌍 Client conegut - Idioma mantingut: {language}")
+        print(f"🌍 Client conegut - Idioma mantingut: {language} (des de BD)")
     elif cached_language:
         language = cached_language
         print(f"💾 Idioma des de cache (BD no disponible): {language}")
@@ -122,8 +125,10 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
         elif message_count == 1:
             # Segon missatge: ara sí que el guardem!
             new_language = detect_language(message)
+            print(f"🔍 [LANG DEBUG] Segon missatge - Idioma detectat: {new_language}")
             try:
                 appointment_manager.save_customer_language(phone, new_language)
+                print(f"✅ [LANG DEBUG] Idioma guardat a BD: {new_language}")
             except Exception as e:
                 print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
             LANGUAGE_CACHE[phone] = new_language  # Guardar en cache

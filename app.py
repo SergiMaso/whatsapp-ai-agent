@@ -142,51 +142,68 @@ def home():
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_webhook():
     """Endpoint principal que recibe mensajes de WhatsApp"""
-    
+    import time
+    start_time = time.time()
+
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
-    
+
     print(f"📱 Mensaje WhatsApp de {from_number}: {incoming_msg}")
-    
+    print(f"⏱️  [TIMING] Webhook started at {time.strftime('%H:%M:%S')}")
+
     resp = MessagingResponse()
-    
+
     try:
         # Si hay audio, transcribirlo
         if media_url:
             print(f"🎤 Transcribiendo audio...")
+            transcribe_start = time.time()
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
             auth_header = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
-            
+
             transcribed_text = transcribe_audio(media_url, auth_header)
-            
+            transcribe_time = time.time() - transcribe_start
+            print(f"⏱️  [TIMING] Transcription took {transcribe_time:.2f}s")
+
             if transcribed_text:
                 print(f"📝 Audio transcrito: {transcribed_text}")
                 incoming_msg = transcribed_text
             else:
                 resp.message("No pude entender el audio. ¿Puedes escribir tu mensaje?")
+                print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
                 return str(resp)
-        
+
         if not incoming_msg:
             resp.message("Hola! Escribe o envía un mensaje de voz para hacer una reserva.")
+            print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
             return str(resp)
-        
+
         # Procesar con IA
+        print(f"🤖 Procesando con IA...")
+        ai_start = time.time()
         ai_response = process_message_with_ai(
-            incoming_msg, 
-            from_number, 
-            appointment_manager, 
+            incoming_msg,
+            from_number,
+            appointment_manager,
             conversation_manager
         )
-        
+        ai_time = time.time() - ai_start
+        print(f"⏱️  [TIMING] AI processing took {ai_time:.2f}s")
+
+        print(f"📤 Enviando respuesta a WhatsApp: {ai_response[:100]}...")
         resp.message(ai_response)
-    
+        print(f"✅ Respuesta añadida a MessagingResponse")
+
     except Exception as e:
         print(f"❌ Error en webhook: {e}")
         import traceback
         traceback.print_exc()
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
-    
+
+    total_time = time.time() - start_time
+    print(f"⏱️  [TIMING] Total webhook time: {total_time:.2f}s")
+    print(f"📨 Retornando MessagingResponse a Twilio (length: {len(str(resp))} chars)")
     return str(resp)
 
 @app.route('/health')
