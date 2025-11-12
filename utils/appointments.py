@@ -396,7 +396,7 @@ class AppointmentManager:
             from itertools import combinations
 
             best_combination = None
-            best_score = float('inf')  # (num_tables, excess_capacity)
+            best_score = (999, 999)  # (num_tables, excess_capacity) - inicialitzar com a tupla
 
             # Provar combinacions de 2, 3, i 4 taules
             for combo_size in [2, 3, 4]:
@@ -423,6 +423,10 @@ class AppointmentManager:
                         best_score = score
                         best_combination = combo
 
+                        # Mostrar millor combinació trobada fins ara
+                        table_nums = '+'.join(str(t[1]) for t in combo)
+                        print(f"✅ [FIND_TABLES] Nova millor combinació: {table_nums} ({combo_size} taules, cap. {total_capacity}, excedent: {excess})")
+
             # Si hem trobat una combinació, retornar-la
             if best_combination:
                 tables_list = [
@@ -433,7 +437,7 @@ class AppointmentManager:
                 excess = total_cap - num_people
 
                 table_numbers = '+'.join(str(t['number']) for t in tables_list)
-                print(f"✅ [FIND_TABLES] Combinació trobada: Taules {table_numbers} ({len(tables_list)} taules, cap. {total_cap}, excedent: {excess})")
+                print(f"✅ [FIND_TABLES] Combinació final: Taules {table_numbers} ({len(tables_list)} taules, cap. {total_cap}, excedent: {excess})")
 
                 return {
                     'tables': tables_list,
@@ -454,18 +458,31 @@ class AppointmentManager:
         """
         Verifica si una combinació de taules és vàlida segons els pairings
 
-        Regla: Les taules d'una combinació han d'estar relacionades per pairing
+        REGLES FLEXIBLES:
+        1. Si només 1 taula: sempre vàlid
+        2. Si cap taula té pairing: VÀLID (es poden combinar lliurement)
+        3. Si ALGUNA taula té pairing: verificar que estan connectades
         """
         # Si només hi ha 1 taula, sempre és vàlid
         if len(tables_combo) == 1:
             return True
 
+        # Comprovar si alguna taula té pairing definit
+        tables_with_pairing = [t for t in tables_combo if t[3] is not None]
+
+        # Si CAP taula té pairing, es poden combinar lliurement
+        if not tables_with_pairing:
+            table_nums = '+'.join(str(t[1]) for t in tables_combo)
+            print(f"✅ [PAIRING] Combinació {table_nums} permesa (taules sense pairing, combinació lliure)")
+            return True
+
+        # Si ALGUNA taula té pairing, verificar que estan totes connectades
         # Convertir a diccionari per accés ràpid
         tables_dict = {t[1]: t for t in tables_combo}  # table_number -> table
         table_numbers = set(tables_dict.keys())
 
         # Comprovar que totes les taules estan connectades per pairing
-        # Algoritme: començar per la primera taula i expandir per pairings
+        # Algoritme BFS: començar per la primera taula i expandir per pairings
         visited = set()
         to_visit = [tables_combo[0][1]]  # table_number
 
@@ -489,7 +506,7 @@ class AppointmentManager:
 
         if not is_valid:
             table_nums = '+'.join(str(t[1]) for t in tables_combo)
-            print(f"⚠️  [PAIRING] Combinació {table_nums} descartada (no estan connectades per pairing)")
+            print(f"⚠️  [PAIRING] Combinació {table_nums} descartada (taules amb pairing no connectades)")
 
         return is_valid
     
