@@ -1032,7 +1032,7 @@ class AppointmentManager:
             }
 
 
-    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=None, notes=None):
+    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=None, notes=None, language=None):
         try:
                     # Si no es passa duration_hours, obtenir-lo de la configuració
             if duration_hours is None:
