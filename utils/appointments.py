@@ -1226,7 +1226,85 @@ class AppointmentManager:
             import traceback
             traceback.print_exc()
             return None
-    
+
+    def _is_time_in_allowed_slots(self, time_str, date_str):
+        """
+        Valida si una hora està dins dels time slots permesos segons la configuració.
+
+        Args:
+            time_str: Hora en format "HH:MM" (ex: "20:00")
+            date_str: Data en format "YYYY-MM-DD" (ex: "2025-11-12")
+
+        Returns:
+            True si l'hora és vàlida, False altrament
+        """
+        try:
+            time_slots_mode = config.get_str('time_slots_mode', 'interval')
+
+            if time_slots_mode == 'interval':
+                # Mode interval: qualsevol hora dins dels slots generals amb l'interval correcte
+                time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+                time_parts = time_str.split(':')
+                time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+
+                # Comprovar que l'hora estigui en un múltiple de l'interval
+                if time_minutes % time_slot_interval != 0:
+                    print(f"⚠️ [VALIDATE TIME] {time_str} no està en un interval de {time_slot_interval} minuts")
+                    return False
+
+                # Comprovar que estigui dins d'un dels slots (lunch o dinner)
+                time_slots = config.get_time_slots()
+                for slot in time_slots:
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                    if slot_start_minutes <= time_minutes <= slot_end_minutes:
+                        print(f"✅ [VALIDATE TIME] {time_str} és vàlid (mode interval)")
+                        return True
+
+                print(f"⚠️ [VALIDATE TIME] {time_str} no està dins de cap slot de servei")
+                return False
+
+            elif time_slots_mode == 'fixed':
+                # Mode fixed: només hores específiques definides a la configuració
+                time_slots = config.get_time_slots()
+                time_parts = time_str.split(':')
+                time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+
+                for slot in time_slots:
+                    # Determinar quines hores fixes usar (lunch o dinner)
+                    if slot['name'] == 'lunch':
+                        fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                    else:  # dinner
+                        fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                    # Comprovar que l'hora sol·licitada estigui a la llista
+                    if time_str in fixed_times:
+                        slot_start_parts = slot['start'].split(':')
+                        slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                        slot_end_parts = slot['end'].split(':')
+                        slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                        # Verificar que també estigui dins del rang del slot
+                        if slot_start_minutes <= time_minutes <= slot_end_minutes:
+                            print(f"✅ [VALIDATE TIME] {time_str} és vàlid (mode fixed, slot: {slot['name']})")
+                            return True
+
+                print(f"⚠️ [VALIDATE TIME] {time_str} NO està en els slots fixos permesos")
+                return False
+
+            # Mode desconegut, rebutjar
+            print(f"⚠️ [VALIDATE TIME] Mode desconegut: {time_slots_mode}")
+            return False
+
+        except Exception as e:
+            print(f"❌ Error validant time slot: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_table_ids=None):
         try:
             with self.get_db_connection() as conn:
@@ -1247,6 +1325,13 @@ class AppointmentManager:
                         time_part = new_time if new_time else current_start.strftime("%H:%M")
 
                         print(f"🕐 [TIMEZONE DEBUG UPDATE] Input rebut: date={date_part}, time={time_part}")
+
+                        # VALIDACIÓ: Si es canvia l'hora, validar que estigui en els time slots permesos
+                        if new_time:
+                            if not self._is_time_in_allowed_slots(time_part, date_part):
+                                print(f"❌ [UPDATE] Hora {time_part} NO és vàlida segons els time slots configurats")
+                                return None
+                            print(f"✅ [UPDATE] Hora {time_part} validada correctament")
 
                         # Parsejar com a NAIVE
                         naive_datetime = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
