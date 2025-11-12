@@ -856,11 +856,24 @@ def delete_table(table_id):
                 table_number = result[0]
                 pairing = result[1] if result[1] else []
 
-                # Verificar només reserves FUTURES
+                # Verificar només reserves FUTURES (tant en table_ids com en table_id)
+                # Comprovar si existeix columna table_id (compatibilitat BD antigues)
                 cursor.execute("""
-                    SELECT COUNT(*) FROM appointments
-                    WHERE %s = ANY(table_ids) AND date >= CURRENT_DATE
-                """, (table_id,))
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='appointments' AND column_name='table_id'
+                """)
+                has_table_id_column = cursor.fetchone() is not None
+
+                if has_table_id_column:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM appointments
+                        WHERE (%s = ANY(table_ids) OR table_id = %s) AND date >= CURRENT_DATE
+                    """, (table_id, table_id))
+                else:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM appointments
+                        WHERE %s = ANY(table_ids) AND date >= CURRENT_DATE
+                    """, (table_id,))
 
                 future_count = cursor.fetchone()[0]
 
@@ -868,11 +881,21 @@ def delete_table(table_id):
                     return jsonify({'error': f'No es pot eliminar. La taula té {future_count} reserves futures. Cancel·la primer les reserves.'}), 409
 
                 # Si hi ha reserves antigues, eliminar-les de la taula abans d'eliminar-la
-                cursor.execute("""
-                    UPDATE appointments
-                    SET table_ids = array_remove(table_ids, %s)
-                    WHERE %s = ANY(table_ids) AND date < CURRENT_DATE
-                """, (table_id, table_id))
+                if has_table_id_column:
+                    # Eliminar de table_ids (array) i table_id (singular)
+                    cursor.execute("""
+                        UPDATE appointments
+                        SET table_ids = array_remove(table_ids, %s),
+                            table_id = CASE WHEN table_id = %s THEN NULL ELSE table_id END
+                        WHERE (%s = ANY(table_ids) OR table_id = %s) AND date < CURRENT_DATE
+                    """, (table_id, table_id, table_id, table_id))
+                else:
+                    # Només eliminar de table_ids (array)
+                    cursor.execute("""
+                        UPDATE appointments
+                        SET table_ids = array_remove(table_ids, %s)
+                        WHERE %s = ANY(table_ids) AND date < CURRENT_DATE
+                    """, (table_id, table_id))
 
                 # ELIMINAR referències d'aquesta taula en el pairing d'altres taules
                 for paired_table_num in pairing:

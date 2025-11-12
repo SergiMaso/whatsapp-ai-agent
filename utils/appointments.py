@@ -1142,12 +1142,22 @@ class AppointmentManager:
                 print(f"❌ [CREATE] Restaurant tancat: {period}")
                 return None
 
-            if not language:
-                language = 'es'  # per defecte
-            # IMPORTANT: Assegurar que el client existeix a customers
-            self.save_customer_info(phone, client_name, language)
-            
-            customer_language = self.get_customer_language(phone) or 'es'
+            # IMPORTANT: NO sobreescriure l'idioma si ja existeix
+            # Primer, comprovar si el client ja té idioma guardat
+            existing_language = self.get_customer_language(phone)
+
+            if existing_language:
+                # Client ja té idioma → mantenir-lo, NOMÉS actualitzar nom
+                print(f"🔒 [LANG] Client ja té idioma '{existing_language}' - NO sobreescriure")
+                self.save_customer_info(phone, client_name, language=None)
+                customer_language = existing_language
+            else:
+                # Client nou → guardar idioma només si és el primer cop
+                if not language:
+                    language = 'es'  # per defecte
+                print(f"👋 [LANG] Client nou - guardant idioma: {language}")
+                self.save_customer_info(phone, client_name, language)
+                customer_language = language
             
             # Buscar taules (individuals o combinades)
             tables_result = self.find_combined_tables(start_time, end_time, num_people)
