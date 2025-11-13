@@ -718,12 +718,54 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         }
                         assistant_reply = update_msgs.get(language, update_msgs['es'])
                     else:
-                        error_msgs = {
-                            'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario.",
-                            'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
-                            'en': "Sorry, couldn't update the reservation. There might not be tables available at that time."
-                        }
-                        assistant_reply = error_msgs.get(language, error_msgs['es'])
+                        # Si ha fallat l'actualització i s'ha intentat canviar l'hora, oferir slots disponibles
+                        if new_time:
+                            target_date = new_date if new_date else date
+                            available_slots = appointment_manager.get_available_time_slots(target_date)
+
+                            if available_slots:
+                                # Formatar les hores segons idioma
+                                if language == 'ca':
+                                    time_format = lambda t: f"{t} ({int(t.split(':')[0])}h)"
+                                elif language == 'en':
+                                    hour = int(new_time.split(':')[0])
+                                    time_format = lambda t: f"{t} ({'noon' if t == '12:00' else 'midnight' if t == '00:00' else t})"
+                                else:  # es
+                                    time_format = lambda t: f"{t} ({int(t.split(':')[0])}h)"
+
+                                slots_formatted = [time_format(slot) for slot in available_slots]
+
+                                if len(slots_formatted) == 1:
+                                    slots_text = slots_formatted[0]
+                                elif len(slots_formatted) == 2:
+                                    conj = {'ca': ' o ', 'en': ' or ', 'es': ' o '}[language]
+                                    slots_text = f"{slots_formatted[0]}{conj}{slots_formatted[1]}"
+                                else:
+                                    conj = {'ca': ' o ', 'en': ', or ', 'es': ' o '}[language]
+                                    slots_text = ", ".join(slots_formatted[:-1]) + conj + slots_formatted[-1]
+
+                                error_msgs = {
+                                    'ca': f"❌ Ho sento, l'hora {new_time} no està disponible.\n\nℹ️ Només pots reservar a: {slots_text}\n\nQuina hora prefereixes?",
+                                    'en': f"❌ Sorry, {new_time} is not available.\n\nℹ️ You can only book at: {slots_text}\n\nWhich time do you prefer?",
+                                    'es': f"❌ Lo siento, la hora {new_time} no está disponible.\n\nℹ️ Solo puedes reservar a: {slots_text}\n\n¿Qué hora prefieres?"
+                                }
+                                assistant_reply = error_msgs.get(language, error_msgs['es'])
+                            else:
+                                # No hi ha slots disponibles (restaurant tancat o sense configuració)
+                                error_msgs = {
+                                    'ca': "❌ Ho sento, no s'ha pogut actualitzar la reserva. No hi ha horaris disponibles per aquesta data.",
+                                    'en': "❌ Sorry, couldn't update the reservation. There are no available times for this date.",
+                                    'es': "❌ Lo siento, no se pudo actualizar la reserva. No hay horarios disponibles para esta fecha."
+                                }
+                                assistant_reply = error_msgs.get(language, error_msgs['es'])
+                        else:
+                            # Missatge genèric si no s'ha intentat canviar l'hora
+                            error_msgs = {
+                                'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
+                                'en': "Sorry, couldn't update the reservation. There might not be tables available at that time.",
+                                'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario."
+                            }
+                            assistant_reply = error_msgs.get(language, error_msgs['es'])
             
             elif function_name == "list_appointments":
                 appointments = appointment_manager.get_appointments(phone)
