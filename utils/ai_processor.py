@@ -420,7 +420,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         api_start = time.time()
 
         response = client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5-nano",
             messages=messages,
             tools=[
                 {
