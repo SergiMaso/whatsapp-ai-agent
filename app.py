@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from utils.transcription import transcribe_audio
 from utils.appointments import AppointmentManager, ConversationManager
-from utils.ai_processor import process_message_with_ai
+from utils.ai_processor import process_message_with_ai, get_default_language
 from utils.weekly_defaults import WeeklyDefaultsManager
 import base64
 from datetime import datetime
@@ -248,7 +248,7 @@ def whatsapp_webhook():
             except:
                 saved_language = None
 
-            language = saved_language or 'es'  # Per defecte espanyol
+            language = saved_language or get_default_language()
 
             # Missatge immediat segons idioma
             listening_messages = {
@@ -256,7 +256,7 @@ def whatsapp_webhook():
                 'es': '🎤 Escuchando...',
                 'en': '🎤 Listening...'
             }
-            resp.message(listening_messages.get(language, listening_messages['es']))
+            resp.message(listening_messages.get(language, listening_messages[get_default_language()]))
 
             # Llançar processament en background AMB LOCK
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
