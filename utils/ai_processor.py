@@ -741,7 +741,6 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                             available_slots = appointment_manager.get_available_time_slots(target_date, target_num_people)
 
                             # Filtrar slots que ja han passat si la reserva és per avui
-                            from datetime import datetime
                             import pytz
                             barcelona_tz = pytz.timezone('Europe/Madrid')
                             now = datetime.now(barcelona_tz)
@@ -958,7 +957,6 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     available_slots = result.get('available_slots', [])
 
                     # Filtrar slots que ja han passat si la reserva és per avui
-                    from datetime import datetime
                     import pytz
                     barcelona_tz = pytz.timezone('Europe/Madrid')
                     now = datetime.now(barcelona_tz)
