@@ -1241,6 +1241,55 @@ class AppointmentManager:
         try:
             time_slots_mode = config.get_str('time_slots_mode', 'interval')
 
+            # Obtenir horaris d'obertura per la data donada
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
+                        FROM opening_hours
+                        WHERE date = %s
+                    """, (date_str,))
+
+                    row = cursor.fetchone()
+
+                    if not row:
+                        # Si no hi ha horaris específics, utilitzar horaris per defecte del dia de la setmana
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        day_name = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][date_obj.weekday()]
+
+                        status = config.get_str(f'{day_name}_status', 'closed')
+                        if status == 'closed':
+                            print(f"⚠️ [VALIDATE TIME] Restaurant tancat el {date_str}")
+                            return False
+
+                        lunch_start = config.get_str(f'{day_name}_lunch_start', '12:00')
+                        lunch_end = config.get_str(f'{day_name}_lunch_end', '15:00')
+                        dinner_start = config.get_str(f'{day_name}_dinner_start', '19:00')
+                        dinner_end = config.get_str(f'{day_name}_dinner_end', '22:30')
+                    else:
+                        status, lunch_start, lunch_end, dinner_start, dinner_end = row
+
+            # Construir time_slots segons els horaris d'obertura
+            time_slots = []
+
+            if status in ['full_day', 'lunch_only'] and lunch_start and lunch_end:
+                time_slots.append({
+                    'start': lunch_start if isinstance(lunch_start, str) else lunch_start.strftime("%H:%M"),
+                    'end': lunch_end if isinstance(lunch_end, str) else lunch_end.strftime("%H:%M"),
+                    'name': 'lunch'
+                })
+
+            if status in ['full_day', 'dinner_only'] and dinner_start and dinner_end:
+                time_slots.append({
+                    'start': dinner_start if isinstance(dinner_start, str) else dinner_start.strftime("%H:%M"),
+                    'end': dinner_end if isinstance(dinner_end, str) else dinner_end.strftime("%H:%M"),
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                print(f"⚠️ [VALIDATE TIME] No hi ha time slots disponibles el {date_str}")
+                return False
+
             if time_slots_mode == 'interval':
                 # Mode interval: qualsevol hora dins dels slots generals amb l'interval correcte
                 time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
@@ -1253,7 +1302,6 @@ class AppointmentManager:
                     return False
 
                 # Comprovar que estigui dins d'un dels slots (lunch o dinner)
-                time_slots = config.get_time_slots()
                 for slot in time_slots:
                     slot_start_parts = slot['start'].split(':')
                     slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
@@ -1269,7 +1317,6 @@ class AppointmentManager:
 
             elif time_slots_mode == 'fixed':
                 # Mode fixed: només hores específiques definides a la configuració
-                time_slots = config.get_time_slots()
                 time_parts = time_str.split(':')
                 time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
 
@@ -1319,7 +1366,55 @@ class AppointmentManager:
         """
         try:
             time_slots_mode = config.get_str('time_slots_mode', 'interval')
-            time_slots = config.get_time_slots()
+
+            # Obtenir horaris d'obertura per la data donada
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
+                        FROM opening_hours
+                        WHERE date = %s
+                    """, (date_str,))
+
+                    row = cursor.fetchone()
+
+                    if not row:
+                        # Si no hi ha horaris específics, utilitzar horaris per defecte del dia de la setmana
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        day_name = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][date_obj.weekday()]
+
+                        status = config.get_str(f'{day_name}_status', 'closed')
+                        if status == 'closed':
+                            print(f"ℹ️  [GET SLOTS] Restaurant tancat el {date_str}")
+                            return []
+
+                        lunch_start = config.get_str(f'{day_name}_lunch_start', '12:00')
+                        lunch_end = config.get_str(f'{day_name}_lunch_end', '15:00')
+                        dinner_start = config.get_str(f'{day_name}_dinner_start', '19:00')
+                        dinner_end = config.get_str(f'{day_name}_dinner_end', '22:30')
+                    else:
+                        status, lunch_start, lunch_end, dinner_start, dinner_end = row
+
+            # Construir time_slots segons els horaris d'obertura
+            time_slots = []
+
+            if status in ['full_day', 'lunch_only'] and lunch_start and lunch_end:
+                time_slots.append({
+                    'start': lunch_start if isinstance(lunch_start, str) else lunch_start.strftime("%H:%M"),
+                    'end': lunch_end if isinstance(lunch_end, str) else lunch_end.strftime("%H:%M"),
+                    'name': 'lunch'
+                })
+
+            if status in ['full_day', 'dinner_only'] and dinner_start and dinner_end:
+                time_slots.append({
+                    'start': dinner_start if isinstance(dinner_start, str) else dinner_start.strftime("%H:%M"),
+                    'end': dinner_end if isinstance(dinner_end, str) else dinner_end.strftime("%H:%M"),
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                print(f"ℹ️  [GET SLOTS] No hi ha time slots disponibles el {date_str}")
+                return []
 
             if time_slots_mode == 'fixed':
                 # Retornar només els slots fixos configurats
