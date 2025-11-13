@@ -683,6 +683,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 new_date = function_args.get('new_date')
                 new_time = function_args.get('new_time')
                 new_num_people = function_args.get('new_num_people')
+                current_num_people = None
 
                 # Si no tenim apt_id però tenim date+time, buscar la reserva
                 if not apt_id and date and time:
@@ -691,6 +692,7 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
                         if str(apt_date) == date and start_time.strftime("%H:%M") == time:
                             apt_id = apt_id_temp
+                            current_num_people = num_people
                             break
 
                 if not apt_id:
@@ -701,6 +703,17 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                     }
                     assistant_reply = error_msgs.get(language, error_msgs['es'])
                 else:
+                    # Si tenim apt_id però no tenim current_num_people, obtenir-lo de les reserves
+                    if not current_num_people:
+                        appointments = appointment_manager.get_appointments(phone)
+                        for apt in appointments:
+                            apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
+                            if apt_id_temp == apt_id:
+                                current_num_people = num_people
+                                if not date:
+                                    date = str(apt_date)
+                                break
+
                     result = appointment_manager.update_appointment(
                         phone=phone,
                         appointment_id=apt_id,
@@ -721,7 +734,8 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         # Si ha fallat l'actualització i s'ha intentat canviar l'hora, oferir slots disponibles
                         if new_time:
                             target_date = new_date if new_date else date
-                            available_slots = appointment_manager.get_available_time_slots(target_date)
+                            target_num_people = new_num_people if new_num_people else current_num_people
+                            available_slots = appointment_manager.get_available_time_slots(target_date, target_num_people)
 
                             if available_slots:
                                 # Formatar les hores segons idioma
