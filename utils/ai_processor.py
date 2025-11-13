@@ -312,10 +312,11 @@ FUNCIONS DISPONIBLES:
 
 IMPORTANT - COM INTERPRETAR HORES:
 - "a les 8" / "a las 8" = 20:00 (sopar)
+- "a les 9" / "a las 9" = 21:00 (sopar)
 - "a les 2" / "a las 2" = 14:00 (dinar)
 - "a les 1" / "a la 1" = 13:00 (dinar)
 - "a les 9 del matí" = 09:00, "a les 9 del vespre" / "a les 9 de la nit" = 21:00
-- Si diuen només un número (1-8) i s'està parlant de reserves, SEMPRE és l'hora, NO el nombre de persones
+- Si diuen només un número (1-9) i s'està parlant de reserves, SEMPRE és l'hora, NO el nombre de persones
 - El nombre de persones normalment es diu explícitament: "2 persones", "per a 4", "som 6"
 
 WORKFLOW CRÍTIC:
@@ -351,10 +352,11 @@ FUNCIONES DISPONIBLES:
 
 IMPORTANTE - CÓMO INTERPRETAR HORAS:
 - "a las 8" / "a les 8" = 20:00 (cena)
+- "a las 9" / "a les 9" = 21:00 (cena)
 - "a las 2" / "a les 2" = 14:00 (comida)
 - "a la 1" / "a les 1" = 13:00 (comida)
 - "a las 9 de la mañana" = 09:00, "a las 9 de la noche" = 21:00
-- Si dicen solo un número (1-8) y se está hablando de reservas, SIEMPRE es la hora, NO el número de personas
+- Si dicen solo un número (1-9) y se está hablando de reservas, SIEMPRE es la hora, NO el número de personas
 - El número de personas normalmente se dice explícitamente: "2 personas", "para 4", "somos 6"
 
 WORKFLOW CRÍTICO:
@@ -390,10 +392,11 @@ AVAILABLE FUNCTIONS:
 
 IMPORTANT - HOW TO INTERPRET TIMES:
 - "at 8" = 20:00 (dinner)
+- "at 9" = 21:00 (dinner)
 - "at 2" = 14:00 (lunch)
 - "at 1" = 13:00 (lunch)
 - "at 9 AM" = 09:00, "at 9 PM" = 21:00
-- If they say just a number (1-8) while talking about reservations, it's ALWAYS the time, NOT the number of people
+- If they say just a number (1-9) while talking about reservations, it's ALWAYS the time, NOT the number of people
 - Number of people is usually explicit: "2 people", "for 4", "we are 6"
 
 CRITICAL WORKFLOW:
@@ -737,6 +740,17 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                             target_num_people = new_num_people if new_num_people else current_num_people
                             available_slots = appointment_manager.get_available_time_slots(target_date, target_num_people)
 
+                            # Filtrar slots que ja han passat si la reserva és per avui
+                            from datetime import datetime
+                            import pytz
+                            barcelona_tz = pytz.timezone('Europe/Madrid')
+                            now = datetime.now(barcelona_tz)
+                            today_str = now.strftime("%Y-%m-%d")
+
+                            if target_date == today_str and available_slots:
+                                current_time = now.strftime("%H:%M")
+                                available_slots = [slot for slot in available_slots if slot > current_time]
+
                             if available_slots:
                                 # Formatar les hores segons idioma
                                 if language == 'ca':
@@ -942,6 +956,17 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                 if result['available']:
                     # Hi ha disponibilitat - mostrar slots disponibles
                     available_slots = result.get('available_slots', [])
+
+                    # Filtrar slots que ja han passat si la reserva és per avui
+                    from datetime import datetime
+                    import pytz
+                    barcelona_tz = pytz.timezone('Europe/Madrid')
+                    now = datetime.now(barcelona_tz)
+                    today_str = now.strftime("%Y-%m-%d")
+
+                    if date == today_str and available_slots:
+                        current_time = now.strftime("%H:%M")
+                        available_slots = [s for s in available_slots if s['time'] > current_time]
 
                     # Agrupar per periode (dinar/sopar)
                     lunch_slots = [s['time'] for s in available_slots if s.get('period') == 'lunch']
