@@ -414,7 +414,11 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
         messages.append({"role": "user", "content": message})
         
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        
+
+        print(f"🤖 [TIMING] Cridant OpenAI API...")
+        import time
+        api_start = time.time()
+
         response = client.chat.completions.create(
             model="gpt-5-mini",
             messages=messages,
@@ -517,6 +521,9 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
             ]
         )
         
+        api_time = time.time() - api_start
+        print(f"✅ [TIMING] OpenAI API resposta rebuda en {api_time:.2f}s")
+
         message_response = response.choices[0].message
         assistant_reply = ""
         
