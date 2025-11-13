@@ -1,8 +1,5 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "builder": "NIXPACKS"
-  },
   "deploy": {
     "startCommand": "python run_both.py",
     "restartPolicyType": "ON_FAILURE",
