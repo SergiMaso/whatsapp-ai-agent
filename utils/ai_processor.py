@@ -11,18 +11,19 @@ from utils.media_manager import MediaManager
 from utils.config import config
 load_dotenv()
 
-# Cache d'idiomes en memòria per evitar canvis inesperats quan BD falla
-LANGUAGE_CACHE = {}
-
-def detect_language(text):
+def detect_language(text, min_keywords=2):
     """
     Detecta l'idioma del text comptant coincidències amb keywords
-    Retorna l'idioma amb més paraules úniques detectades
+    Retorna l'idioma amb més paraules úniques detectades, o None si no hi ha prou evidència
+
+    Args:
+        text: Text a analitzar
+        min_keywords: Mínim de keywords necessàries per considerar la detecció vàlida
     """
     try:
         text_lower = text.lower().strip()
         text_noaccents = unidecode(text_lower)
-        
+
         words = re.findall(r"\b\w+\b", text_noaccents)
         words_set = set(words)
 
@@ -35,18 +36,18 @@ def detect_language(text):
             'noche', 'tarde', 'para', 'con', 'que', 'como',
             'cuando', 'donde', 'quien', 'cual', 'cuantos'
         }
-        
+
         # Keywords catalanes
         catalan_keywords = {
             'vull', 'necessito', 'puc', 'tinc', 'avui', 'dema', 'sisplau',
             'gracies', 'bon', 'dia', 'bona', 'tarda', 'adeu',
             'taula', 'persones', 'dinar', 'sopar',
             'nomes', 'tambe', 'pero', 'si', 'us', 'plau', 'moltes',
-            'estic', 'som',
+            'estic', 'som', 'bones', 'voldria', 'mira',
             'quan', 'on', 'qui', 'qual', 'quants', 'canviar', 'modificar',
             'dic', 'em', 'fer'
         }
-        
+
         # Keywords angleses
         english_keywords = {
             'want', 'need', 'can', 'have', 'today', 'tomorrow',
@@ -54,31 +55,39 @@ def detect_language(text):
             'hello', 'good', 'morning', 'evening',
             'how', 'when', 'where', 'who', 'what', 'many'
         }
-        
+
         # Comptar coincidències
         spanish_matches = len(words_set & spanish_keywords)
         catalan_matches = len(words_set & catalan_keywords)
         english_matches = len(words_set & english_keywords)
-        
+
+        print(f"🔍 [DETECT] Keywords trobades: ca={catalan_matches}, es={spanish_matches}, en={english_matches} (mínim requerit: {min_keywords})")
+
+        # IMPORTANT: Només retornar idioma si hi ha suficients keywords
+        max_matches = max(catalan_matches, spanish_matches, english_matches)
+
+        if max_matches < min_keywords:
+            print(f"⚠️ [DETECT] Text massa curt o sense keywords clares - no es pot determinar idioma amb seguretat")
+            return None
+
         # Retornar idioma amb més coincidències
         if catalan_matches > spanish_matches and catalan_matches > english_matches:
+            print(f"✅ [DETECT] Idioma detectat: ca (amb {catalan_matches} keywords)")
             return 'ca'
         elif spanish_matches > english_matches:
+            print(f"✅ [DETECT] Idioma detectat: es (amb {spanish_matches} keywords)")
             return 'es'
         elif english_matches > 0:
+            print(f"✅ [DETECT] Idioma detectat: en (amb {english_matches} keywords)")
             return 'en'
-        
-        # Si no hi ha coincidències clares, usar langdetect
-        detected = detect(text_lower)
-        
-        # Corregir falsos positius comuns
-        if detected in ['cy', 'tr', 'it', 'pt']:
-            return 'es'
-        
-        return detected
-        
-    except LangDetectException:
-        return 'es'
+
+        # Si no hi ha coincidències clares, NO usar langdetect (massa poc fiable amb textos curts)
+        print(f"⚠️ [DETECT] No s'han trobat keywords suficients - no es pot determinar idioma")
+        return None
+
+    except Exception as e:
+        print(f"❌ [DETECT] Error detectant idioma: {e}")
+        return None
 
 def process_message_with_ai(message, phone, appointment_manager, conversation_manager):
     """
@@ -93,46 +102,62 @@ def process_message_with_ai(message, phone, appointment_manager, conversation_ma
     print(f"📝 Missatge rebut: '{message}'")
 
     # --- STEP 1: Gestió de l'idioma ---
-    # PRIORITAT: Cache en memòria > Base de dades > Detecció automàtica
-    cached_language = LANGUAGE_CACHE.get(phone)
+    # PRIORITAT: Base de dades > Detecció automàtica
     saved_language = None
 
     try:
         saved_language = appointment_manager.get_customer_language(phone)
+        print(f"🔍 [LANG DEBUG] Idioma des de BD: {saved_language}")
     except Exception as e:
-        print(f"⚠️ Error obtenint idioma de BD (usant cache): {e}")
+        print(f"⚠️ Error obtenint idioma de BD: {e}")
+
+    # IMPORTANT: Comprovar si hi ha estat actiu abans de detectar idioma
+    # Si l'usuari està en WAITING_NOTES o WAITING_MENU, NO detectar/actualitzar idioma
+    has_active_state = False
+    temp_history = conversation_manager.get_history(phone, limit=5)
+    for msg in reversed(temp_history):
+        if msg['role'] == 'system' and (msg['content'].startswith('WAITING_NOTES:') or
+                                        msg['content'].startswith('WAITING_MENU:') or
+                                        msg['content'].startswith('WAITING_CONFIRMATION:')):
+            has_active_state = True
+            print(f"🔒 [LANG] Estat actiu detectat - NO actualitzarem l'idioma")
+            break
 
     message_count = conversation_manager.get_message_count(phone)
+    print(f"🔍 [LANG DEBUG] Nombre de missatges: {message_count}")
 
-    # Si hi ha idioma guardat en BD o cache, SEMPRE usar-lo (no canviar mai)
+    # Lògica d'idioma: SI hi ha idioma guardat, SEMPRE mantenir-lo (no canviar mai automàticament)
     if saved_language:
+        # Client conegut: SEMPRE usar idioma de BD, sense excepcions
         language = saved_language
-        LANGUAGE_CACHE[phone] = language  # Actualitzar cache
-        print(f"🌍 Client conegut - Idioma mantingut: {language}")
-    elif cached_language:
-        language = cached_language
-        print(f"💾 Idioma des de cache (BD no disponible): {language}")
+        print(f"🌍 Client conegut - Idioma FIXAT de BD: {language} (no es canviarà)")
     else:
-        # Client nou: detectar idioma
-        if message_count == 0:
-            # Primer missatge: detectar però NO guardar encara
-            language = detect_language(message)
-            LANGUAGE_CACHE[phone] = language  # Guardar en cache
-            print(f"👋 Primer missatge → Idioma detectat (temporal, no guardat): {language}")
-        elif message_count == 1:
-            # Segon missatge: ara sí que el guardem!
-            new_language = detect_language(message)
-            try:
-                appointment_manager.save_customer_language(phone, new_language)
-            except Exception as e:
-                print(f"⚠️ Error guardant idioma a BD (mantingut en cache): {e}")
-            LANGUAGE_CACHE[phone] = new_language  # Guardar en cache
-            language = new_language
-            print(f"🔄 Segon missatge → Idioma detectat i guardat: {new_language}")
+        # Client nou: detectar idioma (només si NO hi ha estat actiu)
+        if has_active_state:
+            # Si hi ha estat actiu, usar idioma per defecte sense guardar-lo
+            language = 'es'  # Per defecte espanyol
+            print(f"🔒 [LANG] Estat actiu - usant idioma per defecte temporal: {language}")
+        elif message_count == 0:
+            # Primer missatge: detectar i guardar NOMÉS si la detecció és segura
+            detected_lang = detect_language(message, min_keywords=2)
+            if detected_lang:
+                # Detecció segura amb suficients keywords
+                language = detected_lang
+                print(f"👋 Primer missatge → Idioma detectat amb seguretat: {language}")
+                try:
+                    appointment_manager.save_customer_language(phone, language)
+                    print(f"✅ [LANG] Idioma guardat a BD: {language}")
+                except Exception as e:
+                    print(f"⚠️ Error guardant idioma a BD: {e}")
+            else:
+                # No hi ha prou evidència - usar per defecte SENSE guardar
+                language = 'es'  # Per defecte espanyol
+                print(f"⚠️ [LANG] Primer missatge sense keywords suficients - usant espanyol per defecte (NO guardat)")
         else:
-            # A partir del tercer missatge: usar el que tinguem (cache o BD)
-            language = LANGUAGE_CACHE.get(phone) or saved_language or 'es'
-            print(f"📌 Tercer missatge o més → idioma: {language}")
+            # A partir del segon missatge: usar per defecte (no hauria d'arribar aquí normalment)
+            # Si arribem aquí vol dir que BD ha fallat
+            language = 'es'  # Per defecte espanyol
+            print(f"⚠️ [LANG] No hi ha idioma guardat a BD, usant per defecte: {language}")
 
     print(f"✅ Idioma final: {language}")
 
@@ -693,12 +718,54 @@ IMPORTANT: Never answer topics unrelated to restaurant reservations."""
                         }
                         assistant_reply = update_msgs.get(language, update_msgs['es'])
                     else:
-                        error_msgs = {
-                            'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario.",
-                            'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
-                            'en': "Sorry, couldn't update the reservation. There might not be tables available at that time."
-                        }
-                        assistant_reply = error_msgs.get(language, error_msgs['es'])
+                        # Si ha fallat l'actualització i s'ha intentat canviar l'hora, oferir slots disponibles
+                        if new_time:
+                            target_date = new_date if new_date else date
+                            available_slots = appointment_manager.get_available_time_slots(target_date)
+
+                            if available_slots:
+                                # Formatar les hores segons idioma
+                                if language == 'ca':
+                                    time_format = lambda t: f"{t} ({int(t.split(':')[0])}h)"
+                                elif language == 'en':
+                                    hour = int(new_time.split(':')[0])
+                                    time_format = lambda t: f"{t} ({'noon' if t == '12:00' else 'midnight' if t == '00:00' else t})"
+                                else:  # es
+                                    time_format = lambda t: f"{t} ({int(t.split(':')[0])}h)"
+
+                                slots_formatted = [time_format(slot) for slot in available_slots]
+
+                                if len(slots_formatted) == 1:
+                                    slots_text = slots_formatted[0]
+                                elif len(slots_formatted) == 2:
+                                    conj = {'ca': ' o ', 'en': ' or ', 'es': ' o '}[language]
+                                    slots_text = f"{slots_formatted[0]}{conj}{slots_formatted[1]}"
+                                else:
+                                    conj = {'ca': ' o ', 'en': ', or ', 'es': ' o '}[language]
+                                    slots_text = ", ".join(slots_formatted[:-1]) + conj + slots_formatted[-1]
+
+                                error_msgs = {
+                                    'ca': f"❌ Ho sento, l'hora {new_time} no està disponible.\n\nℹ️ Només pots reservar a: {slots_text}\n\nQuina hora prefereixes?",
+                                    'en': f"❌ Sorry, {new_time} is not available.\n\nℹ️ You can only book at: {slots_text}\n\nWhich time do you prefer?",
+                                    'es': f"❌ Lo siento, la hora {new_time} no está disponible.\n\nℹ️ Solo puedes reservar a: {slots_text}\n\n¿Qué hora prefieres?"
+                                }
+                                assistant_reply = error_msgs.get(language, error_msgs['es'])
+                            else:
+                                # No hi ha slots disponibles (restaurant tancat o sense configuració)
+                                error_msgs = {
+                                    'ca': "❌ Ho sento, no s'ha pogut actualitzar la reserva. No hi ha horaris disponibles per aquesta data.",
+                                    'en': "❌ Sorry, couldn't update the reservation. There are no available times for this date.",
+                                    'es': "❌ Lo siento, no se pudo actualizar la reserva. No hay horarios disponibles para esta fecha."
+                                }
+                                assistant_reply = error_msgs.get(language, error_msgs['es'])
+                        else:
+                            # Missatge genèric si no s'ha intentat canviar l'hora
+                            error_msgs = {
+                                'ca': "Ho sento, no s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles en aquest horari.",
+                                'en': "Sorry, couldn't update the reservation. There might not be tables available at that time.",
+                                'es': "Lo siento, no se pudo actualizar la reserva. Puede que no haya mesas disponibles en ese horario."
+                            }
+                            assistant_reply = error_msgs.get(language, error_msgs['es'])
             
             elif function_name == "list_appointments":
                 appointments = appointment_manager.get_appointments(phone)

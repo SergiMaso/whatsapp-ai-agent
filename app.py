@@ -17,6 +17,7 @@ from utils.elevenlabs_agent import elevenlabs_manager
 import logging
 from twilio.twiml.voice_response import VoiceResponse
 import time
+import threading
 
 # Imports per autenticació
 from flask_login import login_required, current_user
@@ -116,6 +117,88 @@ weekly_defaults_manager = WeeklyDefaultsManager()
 media_manager = MediaManager()
 voice_handler = VoiceHandler()
 
+# === LOCKS PER ÀUDIOS ASYNC ===
+# Diccionari de locks per telèfon per evitar race conditions amb àudios
+client_audio_locks = {}
+locks_dict_lock = threading.Lock()  # Lock per modificar el diccionari de locks
+
+def get_client_audio_lock(phone):
+    """Obté o crea un lock per aquest telèfon (per àudios)"""
+    with locks_dict_lock:
+        if phone not in client_audio_locks:
+            client_audio_locks[phone] = threading.Lock()
+        return client_audio_locks[phone]
+
+def process_audio_async(media_url, from_number, to_number, auth_header):
+    """
+    Processa àudio en background amb LOCK per client.
+    Només 1 àudio a la vegada per client per evitar race conditions.
+    """
+    # CRÍTICO: Obtenir lock d'aquest client
+    client_lock = get_client_audio_lock(from_number)
+
+    # Si hi ha un altre àudio processant, ESPERA aquí
+    with client_lock:
+        try:
+            start_time = time.time()
+            print(f"🔄 [AUDIO ASYNC] Processant àudio per {from_number}")
+
+            # 1. Transcriure àudio
+            print(f"🎤 [AUDIO ASYNC] Transcribint...")
+            transcribe_start = time.time()
+            transcribed_text = transcribe_audio(media_url, auth_header)
+            transcribe_time = time.time() - transcribe_start
+            print(f"⏱️  [AUDIO ASYNC] Transcription took {transcribe_time:.2f}s")
+
+            if not transcribed_text:
+                print(f"❌ [AUDIO ASYNC] No s'ha pogut transcriure")
+                twilio_client.messages.create(
+                    body="No he pogut entendre l'àudio. Pots escriure el missatge?",
+                    from_=to_number,
+                    to=from_number
+                )
+                return
+
+            print(f"📝 [AUDIO ASYNC] Transcrit: {transcribed_text}")
+
+            # 2. Processar amb IA
+            print(f"🤖 [AUDIO ASYNC] Processant amb IA...")
+            ai_start = time.time()
+            ai_response = process_message_with_ai(
+                transcribed_text,
+                from_number,
+                appointment_manager,
+                conversation_manager
+            )
+            ai_time = time.time() - ai_start
+            print(f"⏱️  [AUDIO ASYNC] AI processing took {ai_time:.2f}s")
+
+            # 3. Enviar resposta via Twilio API
+            print(f"📤 [AUDIO ASYNC] Enviant resposta: {ai_response[:100]}...")
+            message = twilio_client.messages.create(
+                body=ai_response,
+                from_=to_number,
+                to=from_number
+            )
+
+            total_time = time.time() - start_time
+            print(f"✅ [AUDIO ASYNC] Completat en {total_time:.2f}s (SID: {message.sid})")
+
+        except Exception as e:
+            print(f"❌ [AUDIO ASYNC] Error: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Intentar enviar missatge d'error
+            try:
+                twilio_client.messages.create(
+                    body="Ho sento, hi ha hagut un error processant l'àudio. Pots tornar-ho a intentar?",
+                    from_=to_number,
+                    to=from_number
+                )
+            except:
+                print(f"❌ [AUDIO ASYNC] No s'ha pogut enviar missatge d'error")
+
 # Configuració per pujada d'arxius
 UPLOAD_FOLDER = '/tmp/uploads'
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'}
@@ -142,51 +225,85 @@ def home():
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_webhook():
     """Endpoint principal que recibe mensajes de WhatsApp"""
-    
+    start_time = time.time()
+
     incoming_msg = request.values.get('Body', '').strip()
     media_url = request.values.get('MediaUrl0', '')
     from_number = request.values.get('From', '')
-    
+    to_number = request.values.get('To', '')
+
     print(f"📱 Mensaje WhatsApp de {from_number}: {incoming_msg}")
-    
+    print(f"⏱️  [TIMING] Webhook started at {time.strftime('%H:%M:%S')}")
+
     resp = MessagingResponse()
-    
+
     try:
-        # Si hay audio, transcribirlo
+        # === ÀUDIO: PROCESSAR ASYNC ===
         if media_url:
-            print(f"🎤 Transcribiendo audio...")
+            print(f"🎤 Àudio detectat - processament async")
+
+            # Obtenir idioma de l'usuari per la resposta
+            try:
+                saved_language = appointment_manager.get_customer_language(from_number)
+            except:
+                saved_language = None
+
+            language = saved_language or 'es'  # Per defecte espanyol
+
+            # Missatge immediat segons idioma
+            listening_messages = {
+                'ca': '🎤 Escoltant...',
+                'es': '🎤 Escuchando...',
+                'en': '🎤 Listening...'
+            }
+            resp.message(listening_messages.get(language, listening_messages['es']))
+
+            # Llançar processament en background AMB LOCK
             auth_str = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
             auth_header = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
-            
-            transcribed_text = transcribe_audio(media_url, auth_header)
-            
-            if transcribed_text:
-                print(f"📝 Audio transcrito: {transcribed_text}")
-                incoming_msg = transcribed_text
-            else:
-                resp.message("No pude entender el audio. ¿Puedes escribir tu mensaje?")
-                return str(resp)
-        
+
+            thread = threading.Thread(
+                target=process_audio_async,
+                args=(media_url, from_number, to_number, auth_header)
+            )
+            thread.daemon = True
+            thread.start()
+
+            print(f"✅ [AUDIO] Resposta immediata enviada, processant en background")
+            print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
+            return str(resp)
+
+        # === TEXT: PROCESSAR SÍNCRON ===
         if not incoming_msg:
             resp.message("Hola! Escribe o envía un mensaje de voz para hacer una reserva.")
+            print(f"⏱️  [TIMING] Total webhook time: {time.time() - start_time:.2f}s")
             return str(resp)
-        
-        # Procesar con IA
+
+        # Procesar con IA (síncron per missatges de text)
+        print(f"🤖 Procesando con IA (síncron)...")
+        ai_start = time.time()
         ai_response = process_message_with_ai(
-            incoming_msg, 
-            from_number, 
-            appointment_manager, 
+            incoming_msg,
+            from_number,
+            appointment_manager,
             conversation_manager
         )
-        
+        ai_time = time.time() - ai_start
+        print(f"⏱️  [TIMING] AI processing took {ai_time:.2f}s")
+
+        print(f"📤 Enviando respuesta a WhatsApp: {ai_response[:100]}...")
         resp.message(ai_response)
-    
+        print(f"✅ Respuesta añadida a MessagingResponse")
+
     except Exception as e:
         print(f"❌ Error en webhook: {e}")
         import traceback
         traceback.print_exc()
         resp.message("Lo siento, hubo un error. Por favor intenta de nuevo.")
-    
+
+    total_time = time.time() - start_time
+    print(f"⏱️  [TIMING] Total webhook time: {total_time:.2f}s")
+    print(f"📨 Retornando MessagingResponse a Twilio (length: {len(str(resp))} chars)")
     return str(resp)
 
 @app.route('/health')
@@ -287,58 +404,52 @@ def get_appointments():
 def get_appointment(appointment_id):
     """Obtenir una reserva específica (requere login)"""
     try:
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
-                   a.num_people, a.status, a.table_ids
-            FROM appointments a
-            WHERE a.id = %s
-        """, (appointment_id,))
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT a.id, a.phone, a.client_name, a.date, a.start_time, a.end_time,
+                           a.num_people, a.status, a.table_ids
+                    FROM appointments a
+                    WHERE a.id = %s
+                """, (appointment_id,))
 
-        row = cursor.fetchone()
+                row = cursor.fetchone()
 
-        if not row:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Reserva no trobada'}), 404
+                if not row:
+                    return jsonify({'error': 'Reserva no trobada'}), 404
 
-        table_ids = row[8]
+                table_ids = row[8]
 
-        # Obtenir informació de les taules
-        if table_ids:
-            cursor.execute("""
-                SELECT table_number, capacity
-                FROM tables
-                WHERE id = ANY(%s)
-                ORDER BY table_number
-            """, (table_ids,))
-            tables_info = cursor.fetchall()
+                # Obtenir informació de les taules
+                if table_ids:
+                    cursor.execute("""
+                        SELECT table_number, capacity
+                        FROM tables
+                        WHERE id = ANY(%s)
+                        ORDER BY table_number
+                    """, (table_ids,))
+                    tables_info = cursor.fetchall()
 
-            table_numbers = '+'.join(str(t[0]) for t in tables_info) if tables_info else 'N/A'
-            total_capacity = sum(t[1] for t in tables_info) if tables_info else 0
-        else:
-            table_numbers = 'N/A'
-            total_capacity = 0
+                    table_numbers = '+'.join(str(t[0]) for t in tables_info) if tables_info else 'N/A'
+                    total_capacity = sum(t[1] for t in tables_info) if tables_info else 0
+                else:
+                    table_numbers = 'N/A'
+                    total_capacity = 0
 
-        cursor.close()
-        conn.close()
+                appointment = {
+                    'id': row[0],
+                    'phone': row[1],
+                    'client_name': row[2],
+                    'date': row[3].isoformat() if row[3] else None,
+                    'start_time': row[4].isoformat() if row[4] else None,
+                    'end_time': row[5].isoformat() if row[5] else None,
+                    'num_people': row[6],
+                    'status': row[7],
+                    'table_numbers': table_numbers,
+                    'table_capacity': total_capacity,
+                    'table_ids': table_ids
+                }
 
-        appointment = {
-            'id': row[0],
-            'phone': row[1],
-            'client_name': row[2],
-            'date': row[3].isoformat() if row[3] else None,
-            'start_time': row[4].isoformat() if row[4] else None,
-            'end_time': row[5].isoformat() if row[5] else None,
-            'num_people': row[6],
-            'status': row[7],
-            'table_numbers': table_numbers,
-            'table_capacity': total_capacity,
-            'table_ids': table_ids
-        }
-        
         return jsonify(appointment), 200
     
     except Exception as e:
@@ -424,7 +535,8 @@ def create_appointment_api():
             date=data['date'],
             time=data['time'],
             num_people=data['num_people'],
-            duration_hours=data.get('duration_hours', default_duration)
+            duration_hours=data.get('duration_hours', default_duration),
+            language=data.get('language', 'es')
         )
         
         if not result:
@@ -516,28 +628,26 @@ def add_notes_to_appointment_api(appointment_id):
     try:
         data = request.json
         notes = data.get('notes', '')
-        
+
         # Obtenir phone de la reserva
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        if not row:
-            return jsonify({'error': 'Reserva no trobada'}), 404
-        
-        phone = row[0]
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT phone FROM appointments WHERE id = %s", (appointment_id,))
+                row = cursor.fetchone()
+
+                if not row:
+                    return jsonify({'error': 'Reserva no trobada'}), 404
+
+                phone = row[0]
+
         # Afegir notes
         success = appointment_manager.add_notes_to_appointment(phone, appointment_id, notes)
-        
+
         if success:
             return jsonify({'message': 'Notes afegides correctament'}), 200
         else:
             return jsonify({'error': 'Error afegint notes'}), 500
-    
+
     except Exception as e:
         print(f"❌ Error afegint notes: {e}")
         return jsonify({'error': str(e)}), 500
@@ -576,54 +686,49 @@ def create_table():
     """Crear nova taula amb pairing bidireccional"""
     try:
         data = request.json
-        
+
         required = ['table_number', 'capacity']
         for field in required:
             if field not in data:
                 return jsonify({'error': f'Camp obligatori: {field}'}), 400
-        
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT id FROM tables WHERE table_number = %s", (data['table_number'],))
-        if cursor.fetchone():
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
-        
-        pairing = data.get('pairing', None)
-        status = data.get('status', 'available')
-        
-        cursor.execute("""
-            INSERT INTO tables (table_number, capacity, status, pairing)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id
-        """, (data['table_number'], data['capacity'], status, pairing))
-        
-        new_id = cursor.fetchone()[0]
-        
-        # GESTIÓ BIDIRECCIONAL: afegir aquesta taula al pairing de les altres
-        if pairing:
-            for table_num in pairing:
-                cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
-                target = cursor.fetchone()
-                if target:
-                    target_id = target[0]
-                    target_pairing = list(target[1]) if target[1] else []
-                    
-                    if data['table_number'] not in target_pairing:
-                        target_pairing.append(data['table_number'])
-                        cursor.execute(
-                            "UPDATE tables SET pairing = %s WHERE id = %s",
-                            (target_pairing, target_id)
-                        )
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
+
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id FROM tables WHERE table_number = %s", (data['table_number'],))
+                if cursor.fetchone():
+                    return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
+
+                pairing = data.get('pairing', None)
+                status = data.get('status', 'available')
+
+                cursor.execute("""
+                    INSERT INTO tables (table_number, capacity, status, pairing)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                """, (data['table_number'], data['capacity'], status, pairing))
+
+                new_id = cursor.fetchone()[0]
+
+                # GESTIÓ BIDIRECCIONAL: afegir aquesta taula al pairing de les altres
+                if pairing:
+                    for table_num in pairing:
+                        cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
+                        target = cursor.fetchone()
+                        if target:
+                            target_id = target[0]
+                            target_pairing = list(target[1]) if target[1] else []
+
+                            if data['table_number'] not in target_pairing:
+                                target_pairing.append(data['table_number'])
+                                cursor.execute(
+                                    "UPDATE tables SET pairing = %s WHERE id = %s",
+                                    (target_pairing, target_id)
+                                )
+
+                conn.commit()
+
         return jsonify({'message': 'Taula creada correctament', 'id': new_id}), 201
-    
+
     except Exception as e:
         print(f"❌ Error creant taula: {e}")
         import traceback
@@ -636,111 +741,100 @@ def update_table(table_id):
     """Actualitzar paràmetres d'una taula amb pairing bidireccional"""
     try:
         data = request.json
-        
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        # Obtenir pairing actual abans de l'actualització
-        cursor.execute("SELECT pairing, table_number FROM tables WHERE id = %s", (table_id,))
-        result = cursor.fetchone()
-        if not result:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Taula no trobada'}), 404
-        
-        old_pairing = result[0] if result[0] else []
-        current_table_number = result[1]
-        
-        # Construir query dinàmica
-        updates = []
-        values = []
-        
-        if 'table_number' in data:
-            cursor.execute("SELECT id FROM tables WHERE table_number = %s AND id != %s", 
-                          (data['table_number'], table_id))
-            if cursor.fetchone():
-                cursor.close()
-                conn.close()
-                return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
-            updates.append("table_number = %s")
-            values.append(data['table_number'])
-            # Si canviem el número, actualitzar referències
-            current_table_number = data['table_number']
-        
-        if 'capacity' in data:
-            updates.append("capacity = %s")
-            values.append(data['capacity'])
-        
-        if 'status' in data:
-            if data['status'] not in ['available', 'unavailable']:
-                cursor.close()
-                conn.close()
-                return jsonify({'error': 'Status invàlid'}), 400
-            updates.append("status = %s")
-            values.append(data['status'])
-        
-        new_pairing = None
-        if 'pairing' in data:
-            new_pairing = data['pairing']
-            updates.append("pairing = %s")
-            values.append(new_pairing)
-        
-        if not updates:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'No hi ha camps per actualitzar'}), 400
-        
-        values.append(table_id)
-        query = f"UPDATE tables SET {', '.join(updates)} WHERE id = %s"
-        
-        cursor.execute(query, values)
-        
-        # GESTIÓ BIDIRECCIONAL DEL PAIRING
-        if 'pairing' in data:
-            new_pairing_set = set(new_pairing) if new_pairing else set()
-            old_pairing_set = set(old_pairing)
-            
-            # Taules afegides al pairing
-            added = new_pairing_set - old_pairing_set
-            # Taules eliminades del pairing
-            removed = old_pairing_set - new_pairing_set
-            
-            # AFEGIR aquesta taula al pairing de les taules noves
-            for table_num in added:
-                cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
-                target = cursor.fetchone()
-                if target:
-                    target_id = target[0]
-                    target_pairing = list(target[1]) if target[1] else []
-                    
-                    if current_table_number not in target_pairing:
-                        target_pairing.append(current_table_number)
-                        cursor.execute(
-                            "UPDATE tables SET pairing = %s WHERE id = %s",
-                            (target_pairing, target_id)
-                        )
-            
-            # ELIMINAR aquesta taula del pairing de les taules que ja no estan
-            for table_num in removed:
-                cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
-                target = cursor.fetchone()
-                if target:
-                    target_id = target[0]
-                    target_pairing = list(target[1]) if target[1] else []
-                    
-                    if current_table_number in target_pairing:
-                        target_pairing.remove(current_table_number)
-                        cursor.execute(
-                            "UPDATE tables SET pairing = %s WHERE id = %s",
-                            (target_pairing if target_pairing else None, target_id)
-                        )
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
+
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Obtenir pairing actual abans de l'actualització
+                cursor.execute("SELECT pairing, table_number FROM tables WHERE id = %s", (table_id,))
+                result = cursor.fetchone()
+                if not result:
+                    return jsonify({'error': 'Taula no trobada'}), 404
+
+                old_pairing = result[0] if result[0] else []
+                current_table_number = result[1]
+
+                # Construir query dinàmica
+                updates = []
+                values = []
+
+                if 'table_number' in data:
+                    cursor.execute("SELECT id FROM tables WHERE table_number = %s AND id != %s",
+                                  (data['table_number'], table_id))
+                    if cursor.fetchone():
+                        return jsonify({'error': 'Ja existeix una taula amb aquest número'}), 409
+                    updates.append("table_number = %s")
+                    values.append(data['table_number'])
+                    # Si canviem el número, actualitzar referències
+                    current_table_number = data['table_number']
+
+                if 'capacity' in data:
+                    updates.append("capacity = %s")
+                    values.append(data['capacity'])
+
+                if 'status' in data:
+                    if data['status'] not in ['available', 'unavailable']:
+                        return jsonify({'error': 'Status invàlid'}), 400
+                    updates.append("status = %s")
+                    values.append(data['status'])
+
+                new_pairing = None
+                if 'pairing' in data:
+                    new_pairing = data['pairing']
+                    updates.append("pairing = %s")
+                    values.append(new_pairing)
+
+                if not updates:
+                    return jsonify({'error': 'No hi ha camps per actualitzar'}), 400
+
+                values.append(table_id)
+                query = f"UPDATE tables SET {', '.join(updates)} WHERE id = %s"
+
+                cursor.execute(query, values)
+
+                # GESTIÓ BIDIRECCIONAL DEL PAIRING
+                if 'pairing' in data:
+                    new_pairing_set = set(new_pairing) if new_pairing else set()
+                    old_pairing_set = set(old_pairing)
+
+                    # Taules afegides al pairing
+                    added = new_pairing_set - old_pairing_set
+                    # Taules eliminades del pairing
+                    removed = old_pairing_set - new_pairing_set
+
+                    # AFEGIR aquesta taula al pairing de les taules noves
+                    for table_num in added:
+                        cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
+                        target = cursor.fetchone()
+                        if target:
+                            target_id = target[0]
+                            target_pairing = list(target[1]) if target[1] else []
+
+                            if current_table_number not in target_pairing:
+                                target_pairing.append(current_table_number)
+                                cursor.execute(
+                                    "UPDATE tables SET pairing = %s WHERE id = %s",
+                                    (target_pairing, target_id)
+                                )
+
+                    # ELIMINAR aquesta taula del pairing de les taules que ja no estan
+                    for table_num in removed:
+                        cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (table_num,))
+                        target = cursor.fetchone()
+                        if target:
+                            target_id = target[0]
+                            target_pairing = list(target[1]) if target[1] else []
+
+                            if current_table_number in target_pairing:
+                                target_pairing.remove(current_table_number)
+                                cursor.execute(
+                                    "UPDATE tables SET pairing = %s WHERE id = %s",
+                                    (target_pairing if target_pairing else None, target_id)
+                                )
+
+                conn.commit()
+
         return jsonify({'message': 'Taula actualitzada correctament'}), 200
-    
+
     except Exception as e:
         print(f"❌ Error actualitzant taula: {e}")
         import traceback
@@ -751,69 +845,92 @@ def update_table(table_id):
 def delete_table(table_id):
     """Eliminar una taula i netejar pairing bidireccional"""
     try:
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        # Obtenir info de la taula
-        cursor.execute("SELECT table_number, pairing FROM tables WHERE id = %s", (table_id,))
-        result = cursor.fetchone()
-        if not result:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Taula no trobada'}), 404
-        
-        table_number = result[0]
-        pairing = result[1] if result[1] else []
-        
-        # Verificar reserves futures (ara amb table_ids array)
-        cursor.execute("""
-            SELECT COUNT(*) FROM appointments
-            WHERE %s = ANY(table_ids) AND status = 'confirmed' AND date >= CURRENT_DATE
-        """, (table_id,))
-        
-        count = cursor.fetchone()[0]
-        
-        if count > 0:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': f'No es pot eliminar. La taula té {count} reserves futures'}), 409
-        
-        # ELIMINAR referències d'aquesta taula en el pairing d'altres taules
-        for paired_table_num in pairing:
-            cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (paired_table_num,))
-            target = cursor.fetchone()
-            if target:
-                target_id = target[0]
-                target_pairing = list(target[1]) if target[1] else []
-                
-                if table_number in target_pairing:
-                    target_pairing.remove(table_number)
-                    cursor.execute(
-                        "UPDATE tables SET pairing = %s WHERE id = %s",
-                        (target_pairing if target_pairing else None, target_id)
-                    )
-        
-        # Ara també eliminar aquesta taula de qualsevol altre pairing que la referencii
-        cursor.execute("SELECT id, table_number, pairing FROM tables WHERE pairing @> ARRAY[%s]::integer[]", (table_number,))
-        for row in cursor.fetchall():
-            other_id = row[0]
-            other_pairing = list(row[2]) if row[2] else []
-            if table_number in other_pairing:
-                other_pairing.remove(table_number)
-                cursor.execute(
-                    "UPDATE tables SET pairing = %s WHERE id = %s",
-                    (other_pairing if other_pairing else None, other_id)
-                )
-        
-        # Eliminar la taula
-        cursor.execute("DELETE FROM tables WHERE id = %s", (table_id,))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Obtenir info de la taula
+                cursor.execute("SELECT table_number, pairing FROM tables WHERE id = %s", (table_id,))
+                result = cursor.fetchone()
+                if not result:
+                    return jsonify({'error': 'Taula no trobada'}), 404
+
+                table_number = result[0]
+                pairing = result[1] if result[1] else []
+
+                # Verificar només reserves FUTURES (tant en table_ids com en table_id)
+                # Comprovar si existeix columna table_id (compatibilitat BD antigues)
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='appointments' AND column_name='table_id'
+                """)
+                has_table_id_column = cursor.fetchone() is not None
+
+                if has_table_id_column:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM appointments
+                        WHERE (%s = ANY(table_ids) OR table_id = %s) AND date >= CURRENT_DATE
+                    """, (table_id, table_id))
+                else:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM appointments
+                        WHERE %s = ANY(table_ids) AND date >= CURRENT_DATE
+                    """, (table_id,))
+
+                future_count = cursor.fetchone()[0]
+
+                if future_count > 0:
+                    return jsonify({'error': f'No es pot eliminar. La taula té {future_count} reserves futures. Cancel·la primer les reserves.'}), 409
+
+                # Si hi ha reserves antigues, eliminar-les de la taula abans d'eliminar-la
+                if has_table_id_column:
+                    # Eliminar de table_ids (array) i table_id (singular)
+                    cursor.execute("""
+                        UPDATE appointments
+                        SET table_ids = array_remove(table_ids, %s),
+                            table_id = CASE WHEN table_id = %s THEN NULL ELSE table_id END
+                        WHERE (%s = ANY(table_ids) OR table_id = %s) AND date < CURRENT_DATE
+                    """, (table_id, table_id, table_id, table_id))
+                else:
+                    # Només eliminar de table_ids (array)
+                    cursor.execute("""
+                        UPDATE appointments
+                        SET table_ids = array_remove(table_ids, %s)
+                        WHERE %s = ANY(table_ids) AND date < CURRENT_DATE
+                    """, (table_id, table_id))
+
+                # ELIMINAR referències d'aquesta taula en el pairing d'altres taules
+                for paired_table_num in pairing:
+                    cursor.execute("SELECT id, pairing FROM tables WHERE table_number = %s", (paired_table_num,))
+                    target = cursor.fetchone()
+                    if target:
+                        target_id = target[0]
+                        target_pairing = list(target[1]) if target[1] else []
+
+                        if table_number in target_pairing:
+                            target_pairing.remove(table_number)
+                            cursor.execute(
+                                "UPDATE tables SET pairing = %s WHERE id = %s",
+                                (target_pairing if target_pairing else None, target_id)
+                            )
+
+                # Ara també eliminar aquesta taula de qualsevol altre pairing que la referencii
+                cursor.execute("SELECT id, table_number, pairing FROM tables WHERE pairing @> ARRAY[%s]::integer[]", (table_number,))
+                for row in cursor.fetchall():
+                    other_id = row[0]
+                    other_pairing = list(row[2]) if row[2] else []
+                    if table_number in other_pairing:
+                        other_pairing.remove(table_number)
+                        cursor.execute(
+                            "UPDATE tables SET pairing = %s WHERE id = %s",
+                            (other_pairing if other_pairing else None, other_id)
+                        )
+
+                # Eliminar la taula
+                cursor.execute("DELETE FROM tables WHERE id = %s", (table_id,))
+
+                conn.commit()
+
         return jsonify({'message': 'Taula eliminada correctament'}), 200
-    
+
     except Exception as e:
         print(f"❌ Error eliminant taula: {e}")
         import traceback
@@ -872,33 +989,29 @@ def get_customers():
 def get_conversations(phone):
     """Obtenir historial de conversa d'un client (sense missatges system)"""
     try:
-        conn = conversation_manager.get_connection()
-        cursor = conn.cursor()
-        
         # Netejar prefix whatsapp: o telegram: si existeix
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
-        
-        cursor.execute("""
-            SELECT id, role, content, created_at
-            FROM conversations
-            WHERE phone = %s AND role != 'system'
-            ORDER BY created_at ASC
-        """, (clean_phone,))
-        
-        conversations = []
-        for row in cursor.fetchall():
-            conversations.append({
-                'id': row[0],
-                'role': row[1],
-                'content': row[2],
-                'created_at': row[3].isoformat() if row[3] else None
-            })
-        
-        cursor.close()
-        conn.close()
-        
+
+        with conversation_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, role, content, created_at
+                    FROM conversations
+                    WHERE phone = %s AND role != 'system'
+                    ORDER BY created_at ASC
+                """, (clean_phone,))
+
+                conversations = []
+                for row in cursor.fetchall():
+                    conversations.append({
+                        'id': row[0],
+                        'role': row[1],
+                        'content': row[2],
+                        'created_at': row[3].isoformat() if row[3] else None
+                    })
+
         return jsonify(conversations), 200
-    
+
     except Exception as e:
         print(f"❌ Error obtenint converses: {e}")
         return jsonify({'error': str(e)}), 500
@@ -1404,47 +1517,42 @@ def send_broadcast():
     """📢 Enviar missatge difús a tots els clients o filtrats"""
     try:
         data = request.json
-        
+
         message = data.get('message')
         filter_type = data.get('filter_type', 'all')
         filter_value = data.get('filter_value')
-        
+
         if not message:
             return jsonify({'error': 'El missatge és obligatori'}), 400
-        
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        if filter_type == 'all':
-            cursor.execute("""
-                SELECT DISTINCT phone, name, language 
-                FROM customers 
-                WHERE name != 'TEMP'
-            """)
-        elif filter_type == 'language':
-            if not filter_value:
-                return jsonify({'error': "Cal especificar l'idioma"}), 400
-            cursor.execute("""
-                SELECT DISTINCT phone, name, language 
-                FROM customers 
-                WHERE language = %s AND name != 'TEMP'
-            """, (filter_value,))
-        elif filter_type == 'recent_customers':
-            cursor.execute("""
-                SELECT DISTINCT phone, name, language 
-                FROM customers 
-                WHERE last_visit >= CURRENT_DATE - INTERVAL '30 days' 
-                AND name != 'TEMP'
-            """)
-        else:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Tipus de filtre invàlid'}), 400
-        
-        recipients = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
+
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                if filter_type == 'all':
+                    cursor.execute("""
+                        SELECT DISTINCT phone, name, language
+                        FROM customers
+                        WHERE name != 'TEMP'
+                    """)
+                elif filter_type == 'language':
+                    if not filter_value:
+                        return jsonify({'error': "Cal especificar l'idioma"}), 400
+                    cursor.execute("""
+                        SELECT DISTINCT phone, name, language
+                        FROM customers
+                        WHERE language = %s AND name != 'TEMP'
+                    """, (filter_value,))
+                elif filter_type == 'recent_customers':
+                    cursor.execute("""
+                        SELECT DISTINCT phone, name, language
+                        FROM customers
+                        WHERE last_visit >= CURRENT_DATE - INTERVAL '30 days'
+                        AND name != 'TEMP'
+                    """)
+                else:
+                    return jsonify({'error': 'Tipus de filtre invàlid'}), 400
+
+                recipients = cursor.fetchall()
+
         if not recipients:
             return jsonify({'error': "No s'han trobat destinataris"}), 404
         
@@ -1505,52 +1613,150 @@ def send_broadcast():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/send-message', methods=['POST'])
+@admin_required
+def send_individual_message():
+    """
+    📤 Enviar missatge individual a un client específic
+    
+    Body:
+    {
+        "phone": "+34600000000",
+        "message": "Hola, tenim una oferta especial avui!"
+    }
+    """
+    try:
+        data = request.json
+        
+        phone = data.get('phone')
+        message = data.get('message')
+        
+        if not phone or not message:
+            return jsonify({'error': 'El telèfon i el missatge són obligatoris'}), 400
+        
+        # Obtenir el client de la base de dades
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT name, language FROM customers WHERE phone = %s
+                """, (phone,))
+                result = cursor.fetchone()
+                
+                if not result:
+                    return jsonify({'error': 'Client no trobat'}), 404
+                
+                name = result[0]
+                language = result[1] or 'es'
+        
+        # Intentar enviar via WhatsApp/Telegram segons el prefix
+        clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '').strip()
+        
+        try:
+            # Si és un telèfon (sense prefix telegram:), enviar via WhatsApp
+            if not phone.startswith('telegram:'):
+                twilio_message = twilio_client.messages.create(
+                    from_=os.getenv('TWILIO_WHATSAPP_NUMBER'),
+                    body=message,
+                    to=f'whatsapp:{clean_phone}'
+                )
+                
+                # Guardar el missatge a conversations
+                with appointment_manager.get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO conversations (phone, role, content)
+                            VALUES (%s, %s, %s)
+                        """, (phone, 'assistant', message))
+                        conn.commit()
+                
+                print(f"✅ WhatsApp enviat a {name} ({phone})")
+                return jsonify({
+                    'success': True,
+                    'message': 'Missatge enviat correctament',
+                    'channel': 'whatsapp',
+                    'phone': phone,
+                    'name': name
+                }), 200
+            
+            # Si té prefix telegram:, enviar via Telegram
+            else:
+                telegram_chat_id = clean_phone
+                telegram_bot.send_message(
+                    chat_id=telegram_chat_id,
+                    text=message,
+                    parse_mode='Markdown'
+                )
+                
+                # Guardar el missatge a conversations
+                with appointment_manager.get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO conversations (phone, role, content)
+                            VALUES (%s, %s, %s)
+                        """, (phone, 'assistant', message))
+                        conn.commit()
+                
+                print(f"✅ Telegram enviat a {name} ({phone})")
+                return jsonify({
+                    'success': True,
+                    'message': 'Missatge enviat correctament',
+                    'channel': 'telegram',
+                    'phone': phone,
+                    'name': name
+                }), 200
+                
+        except Exception as e:
+            print(f"❌ Error enviant missatge a {phone}: {e}")
+            return jsonify({
+                'error': f'Error enviant el missatge: {str(e)}'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error en send_individual_message: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/broadcast/preview', methods=['POST'])
 def preview_broadcast():
     """👁️ Previsualitzar destinataris del missatge difús"""
     try:
         data = request.json
-        
+
         filter_type = data.get('filter_type', 'all')
         filter_value = data.get('filter_value')
-        
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        if filter_type == 'all':
-            cursor.execute("""
-                SELECT phone, name, language 
-                FROM customers 
-                WHERE name != 'TEMP'
-                ORDER BY last_visit DESC
-            """)
-        elif filter_type == 'language':
-            if not filter_value:
-                cursor.close()
-                conn.close()
-                return jsonify({'error': "Cal especificar l'idioma"}), 400
-            cursor.execute("""
-                SELECT phone, name, language 
-                FROM customers 
-                WHERE language = %s AND name != 'TEMP'
-                ORDER BY last_visit DESC
-            """, (filter_value,))
-        elif filter_type == 'recent_customers':
-            cursor.execute("""
-                SELECT phone, name, language 
-                FROM customers 
-                WHERE last_visit >= CURRENT_DATE - INTERVAL '30 days' 
-                AND name != 'TEMP'
-                ORDER BY last_visit DESC
-            """)
-        else:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Tipus de filtre invàlid'}), 400
-        
-        recipients = cursor.fetchall()
-        cursor.close()
-        conn.close()
+
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                if filter_type == 'all':
+                    cursor.execute("""
+                        SELECT phone, name, language
+                        FROM customers
+                        WHERE name != 'TEMP'
+                        ORDER BY last_visit DESC
+                    """)
+                elif filter_type == 'language':
+                    if not filter_value:
+                        return jsonify({'error': "Cal especificar l'idioma"}), 400
+                    cursor.execute("""
+                        SELECT phone, name, language
+                        FROM customers
+                        WHERE language = %s AND name != 'TEMP'
+                        ORDER BY last_visit DESC
+                    """, (filter_value,))
+                elif filter_type == 'recent_customers':
+                    cursor.execute("""
+                        SELECT phone, name, language
+                        FROM customers
+                        WHERE last_visit >= CURRENT_DATE - INTERVAL '30 days'
+                        AND name != 'TEMP'
+                        ORDER BY last_visit DESC
+                    """)
+                else:
+                    return jsonify({'error': 'Tipus de filtre invàlid'}), 400
+
+                recipients = cursor.fetchall()
         
         by_channel = {'whatsapp': 0, 'telegram': 0}
         by_language = {'ca': 0, 'es': 0, 'en': 0}
@@ -1589,86 +1795,75 @@ def update_customer_api(phone):
     """✏️ Actualitzar informació d'un client"""
     try:
         data = request.json
-        
+
         # Netejar prefix whatsapp: o telegram: si existeix
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
-        
-        # Validar que existeix el client
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT name FROM customers WHERE phone = %s", (clean_phone,))
-        existing = cursor.fetchone()
-        
-        if not existing:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Client no trobat'}), 404
-        
-        # Camps actualitzables
-        updates = []
-        values = []
-        
-        if 'name' in data:
-            if not data['name'] or data['name'].strip() == '':
-                cursor.close()
-                conn.close()
-                return jsonify({'error': 'El nom no pot estar buit'}), 400
-            updates.append("name = %s")
-            values.append(data['name'].strip())
-        
-        if 'language' in data:
-            # Acceptar qualsevol idioma (no limitem)
-            updates.append("language = %s")
-            values.append(data['language'])
-        
-        # Si s'ha canviat el telèfon
-        new_phone = None
-        if 'phone' in data and data['phone'] != clean_phone:
-            new_phone = data['phone'].strip()
-            
-            # Validar que el nou telèfon no existeix ja
-            cursor.execute("SELECT name FROM customers WHERE phone = %s", (new_phone,))
-            if cursor.fetchone():
-                cursor.close()
-                conn.close()
-                return jsonify({'error': 'Ja existeix un client amb aquest telèfon'}), 409
-            
-            # Actualitzar telèfon a customers
-            updates.append("phone = %s")
-            values.append(new_phone)
-        
-        if not updates:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'No hi ha camps per actualitzar'}), 400
-        
-        # Actualitzar client
-        values.append(clean_phone)
-        query = f"UPDATE customers SET {', '.join(updates)} WHERE phone = %s"
-        
-        cursor.execute(query, values)
-        
-        # Si s'ha canviat el telèfon, actualitzar també a appointments i conversations
-        if new_phone:
-            cursor.execute("UPDATE appointments SET phone = %s WHERE phone = %s", (new_phone, clean_phone))
-            cursor.execute("UPDATE conversations SET phone = %s WHERE phone = %s", (new_phone, clean_phone))
-            print(f"✅ Telèfon actualitzat de {clean_phone} a {new_phone}")
-        
-        conn.commit()
-        
-        # Obtenir dades actualitzades
-        final_phone = new_phone if new_phone else clean_phone
-        cursor.execute("""
-            SELECT phone, name, language, visit_count, last_visit
-            FROM customers
-            WHERE phone = %s
-        """, (final_phone,))
-        
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
+
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Validar que existeix el client
+                cursor.execute("SELECT name FROM customers WHERE phone = %s", (clean_phone,))
+                existing = cursor.fetchone()
+
+                if not existing:
+                    return jsonify({'error': 'Client no trobat'}), 404
+
+                # Camps actualitzables
+                updates = []
+                values = []
+
+                if 'name' in data:
+                    if not data['name'] or data['name'].strip() == '':
+                        return jsonify({'error': 'El nom no pot estar buit'}), 400
+                    updates.append("name = %s")
+                    values.append(data['name'].strip())
+
+                if 'language' in data:
+                    # Acceptar qualsevol idioma (no limitem)
+                    updates.append("language = %s")
+                    values.append(data['language'])
+
+                # Si s'ha canviat el telèfon
+                new_phone = None
+                if 'phone' in data and data['phone'] != clean_phone:
+                    new_phone = data['phone'].strip()
+
+                    # Validar que el nou telèfon no existeix ja
+                    cursor.execute("SELECT name FROM customers WHERE phone = %s", (new_phone,))
+                    if cursor.fetchone():
+                        return jsonify({'error': 'Ja existeix un client amb aquest telèfon'}), 409
+
+                    # Actualitzar telèfon a customers
+                    updates.append("phone = %s")
+                    values.append(new_phone)
+
+                if not updates:
+                    return jsonify({'error': 'No hi ha camps per actualitzar'}), 400
+
+                # Actualitzar client
+                values.append(clean_phone)
+                query = f"UPDATE customers SET {', '.join(updates)} WHERE phone = %s"
+
+                cursor.execute(query, values)
+
+                # Si s'ha canviat el telèfon, actualitzar també a appointments i conversations
+                if new_phone:
+                    cursor.execute("UPDATE appointments SET phone = %s WHERE phone = %s", (new_phone, clean_phone))
+                    cursor.execute("UPDATE conversations SET phone = %s WHERE phone = %s", (new_phone, clean_phone))
+                    print(f"✅ Telèfon actualitzat de {clean_phone} a {new_phone}")
+
+                conn.commit()
+
+                # Obtenir dades actualitzades
+                final_phone = new_phone if new_phone else clean_phone
+                cursor.execute("""
+                    SELECT phone, name, language, visit_count, last_visit
+                    FROM customers
+                    WHERE phone = %s
+                """, (final_phone,))
+
+                row = cursor.fetchone()
+
         if row:
             updated_customer = {
                 'phone': row[0],
@@ -1677,14 +1872,14 @@ def update_customer_api(phone):
                 'visit_count': row[3],
                 'last_visit': row[4].isoformat() if row[4] else None
             }
-            
+
             return jsonify({
                 'message': 'Client actualitzat correctament',
                 'customer': updated_customer
             }), 200
         else:
             return jsonify({'error': 'Error obtenint dades actualitzades'}), 500
-    
+
     except Exception as e:
         print(f"❌ Error actualitzant client: {e}")
         import traceback
@@ -1698,54 +1893,47 @@ def delete_customer_api(phone):
     try:
         # Netejar prefix whatsapp: o telegram: si existeix
         clean_phone = phone.replace('whatsapp:', '').replace('telegram:', '')
-        
-        conn = appointment_manager.get_connection()
-        cursor = conn.cursor()
-        
-        # Verificar que existeix el client
-        cursor.execute("SELECT name FROM customers WHERE phone = %s", (clean_phone,))
-        existing = cursor.fetchone()
-        
-        if not existing:
-            cursor.close()
-            conn.close()
-            return jsonify({'error': 'Client no trobat'}), 404
-        
-        # Comprovar si té reserves futures
-        cursor.execute("""
-            SELECT COUNT(*) FROM appointments
-            WHERE phone = %s AND status = 'confirmed' AND date >= CURRENT_DATE
-        """, (clean_phone,))
-        
-        future_appointments = cursor.fetchone()[0]
-        
-        if future_appointments > 0:
-            cursor.close()
-            conn.close()
-            return jsonify({
-                'error': f'No es pot eliminar. El client té {future_appointments} reserves futures. Cancel·la-les primer.'
-            }), 409
-        
-        # Eliminar en cascada:
-        # 1. Conversations
-        cursor.execute("DELETE FROM conversations WHERE phone = %s", (clean_phone,))
-        deleted_conversations = cursor.rowcount
-        
-        # 2. Appointments (passades)
-        cursor.execute("DELETE FROM appointments WHERE phone = %s", (clean_phone,))
-        deleted_appointments = cursor.rowcount
-        
-        # 3. Customer
-        cursor.execute("DELETE FROM customers WHERE phone = %s", (clean_phone,))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
+
+        with appointment_manager.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Verificar que existeix el client
+                cursor.execute("SELECT name FROM customers WHERE phone = %s", (clean_phone,))
+                existing = cursor.fetchone()
+
+                if not existing:
+                    return jsonify({'error': 'Client no trobat'}), 404
+
+                # Comprovar si té reserves futures
+                cursor.execute("""
+                    SELECT COUNT(*) FROM appointments
+                    WHERE phone = %s AND status = 'confirmed' AND date >= CURRENT_DATE
+                """, (clean_phone,))
+
+                future_appointments = cursor.fetchone()[0]
+
+                if future_appointments > 0:
+                    return jsonify({
+                        'error': f'No es pot eliminar. El client té {future_appointments} reserves futures. Cancel·la-les primer.'
+                    }), 409
+
+                # Eliminar en cascada:
+                # 1. Conversations
+                cursor.execute("DELETE FROM conversations WHERE phone = %s", (clean_phone,))
+                deleted_conversations = cursor.rowcount
+
+                # 2. Appointments (passades)
+                cursor.execute("DELETE FROM appointments WHERE phone = %s", (clean_phone,))
+                deleted_appointments = cursor.rowcount
+
+                # 3. Customer
+                cursor.execute("DELETE FROM customers WHERE phone = %s", (clean_phone,))
+
+                conn.commit()
+
         print(f"✅ Client {clean_phone} eliminat:")
         print(f"   - {deleted_conversations} converses")
         print(f"   - {deleted_appointments} reserves")
-        
+
         return jsonify({
             'message': 'Client eliminat correctament',
             'deleted': {
@@ -1753,7 +1941,7 @@ def delete_customer_api(phone):
                 'appointments': deleted_appointments
             }
         }), 200
-    
+
     except Exception as e:
         print(f"❌ Error eliminant client: {e}")
         import traceback
@@ -2537,11 +2725,36 @@ def elevenlabs_update_appointment():
                 'message': messages.get(language, messages['es'])
             }), 200
         else:
-            messages = {
-                'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles para los nuevos datos.",
-                'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles per les noves dades.",
-                'en': "Could not update the reservation. There might not be tables available for the new data."
-            }
+            # Si ha fallat l'actualització, obtenir els slots disponibles per oferir alternatives
+            target_date = new_date if new_date else date
+            available_slots = appointment_manager.get_available_time_slots(target_date)
+
+            if available_slots and new_time:
+                # Si hi ha slots disponibles i s'ha intentat canviar l'hora, informar de les opcions vàlides
+                from utils.ai_processor_voice import format_time_natural
+
+                # Formatar les hores de manera natural
+                slots_formatted = [format_time_natural(slot, language) for slot in available_slots]
+
+                if len(slots_formatted) == 1:
+                    slots_text = slots_formatted[0]
+                elif len(slots_formatted) == 2:
+                    slots_text = f"{slots_formatted[0]} o {slots_formatted[1]}" if language == 'es' else f"{slots_formatted[0]} o {slots_formatted[1]}"
+                else:
+                    slots_text = ", ".join(slots_formatted[:-1]) + f" o {slots_formatted[-1]}"
+
+                messages = {
+                    'es': f"Lo siento, la hora {format_time_natural(new_time, language)} no está disponible. Solo puedes reservar a las {slots_text}. ¿Cuál prefieres?",
+                    'ca': f"Ho sento, l'hora {format_time_natural(new_time, language)} no està disponible. Només pots reservar a les {slots_text}. Quina prefereixes?",
+                    'en': f"Sorry, {format_time_natural(new_time, language)} is not available. You can only book at {slots_text}. Which one do you prefer?"
+                }
+            else:
+                # Missatge genèric si no hi ha slots o no s'ha canviat l'hora
+                messages = {
+                    'es': "No se pudo actualizar la reserva. Puede que no haya mesas disponibles para los nuevos datos.",
+                    'ca': "No s'ha pogut actualitzar la reserva. Pot ser que no hi hagi taules disponibles per les noves dades.",
+                    'en': "Could not update the reservation. There might not be tables available for the new data."
+                }
 
             logger.error(f"❌ [ELEVEN LABS UPDATE] Error actualitzant reserva {apt_id}")
 

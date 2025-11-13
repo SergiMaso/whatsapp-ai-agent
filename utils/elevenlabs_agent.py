@@ -55,7 +55,9 @@ IMPORTANT:
 - Sigues molt breu i directe (màxim 2 frases)
 - NO facis preguntes innecessàries
 - Quan tinguis tota la info, crida la funció directament
-- Sempre confirma les reserves de manera clara i natural""",
+- Sempre confirma les reserves de manera clara i natural
+- Si el sistema t'indica horaris específics disponibles, ofereix NOMÉS aquestes opcions al client
+- NO deixis que el client provi múltiples hores si el sistema ja t'ha indicat les úniques opcions vàlides""",
 
             'es': """Eres el asistente de reservas del restaurante Amaru en Barcelona.
 
@@ -79,7 +81,9 @@ IMPORTANTE:
 - Sé muy breve y directo (máximo 2 frases)
 - NO hagas preguntas innecesarias
 - Cuando tengas toda la info, llama a la función directamente
-- Siempre confirma las reservas de manera clara y natural""",
+- Siempre confirma las reservas de manera clara y natural
+- Si el sistema te indica horarios específicos disponibles, ofrece SOLO esas opciones al cliente
+- NO dejes que el cliente pruebe múltiples horas si el sistema ya te ha indicado las únicas opciones válidas""",
 
             'en': """You are the reservation assistant for Amaru restaurant in Barcelona.
 
@@ -103,7 +107,9 @@ IMPORTANT:
 - Be very brief and direct (max 2 sentences)
 - DON'T ask unnecessary questions
 - When you have all info, call the function directly
-- Always confirm reservations clearly and naturally"""
+- Always confirm reservations clearly and naturally
+- If the system indicates specific available times, offer ONLY those options to the customer
+- DON'T let the customer try multiple times if the system has already indicated the only valid options"""
         }
         
         return prompts.get(language, prompts['es'])

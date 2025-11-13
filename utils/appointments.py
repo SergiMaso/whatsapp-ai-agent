@@ -325,7 +325,12 @@ class AppointmentManager:
     
     def find_combined_tables(self, start_time, end_time, num_people, exclude_appointment_id=None):
         """
-        ⚡ OPTIMITZAT: Buscar taules amb context manager (connexió sempre es retorna al pool)
+        ⚡ OPTIMITZAT: Buscar taules amb algorisme millorat
+
+        PRIORITATS:
+        1. Taula individual més petita que càpiga el grup
+        2. Si cal combinar: Mínim nombre de taules + Mínim excedent de capacitat
+
         Retorna: {'tables': [taula1, taula2, ...], 'total_capacity': X}
         """
         try:
@@ -348,127 +353,210 @@ class AppointmentManager:
 
                 occupied_ids = [row[0] for row in cursor.fetchall()]
 
-                # Obtenir taules SENSE PAIRING
+                # Obtenir TOTES les taules disponibles
                 cursor.execute("""
                     SELECT id, table_number, capacity, pairing FROM tables
-                    WHERE status = 'available' AND id NOT IN %s AND pairing IS NULL
+                    WHERE status = 'available' AND id NOT IN %s
                     ORDER BY capacity ASC, table_number
                 """, (tuple(occupied_ids) if occupied_ids else (0,),))
 
-                tables_no_pairing = cursor.fetchall()
-
-                # Obtenir taules AMB PAIRING
-                cursor.execute("""
-                    SELECT id, table_number, capacity, pairing FROM tables
-                    WHERE status = 'available' AND id NOT IN %s AND pairing IS NOT NULL
-                    ORDER BY capacity ASC, table_number
-                """, (tuple(occupied_ids) if occupied_ids else (0,),))
-
-                tables_with_pairing = cursor.fetchall()
-
+                all_tables = cursor.fetchall()
                 cursor.close()
-                # ⚡ Connexió es retorna automàticament al sortir del 'with'
-            
-            # 1. PRIORITAT MÀXIMA: Taula SENSE PAIRING amb capacitat EXACTA
-            for table in tables_no_pairing:
-                if table[2] == num_people:
-                    return {
-                        'tables': [{
-                            'id': table[0],
-                            'number': table[1],
-                            'capacity': table[2]
-                        }],
-                        'total_capacity': table[2]
-                    }
-            
-            # 2. Taula SENSE PAIRING amb capacitat mínima suficient (la més petita possible)
-            # ✅ CORRECCIÓ: Buscar la taula MÉS PETITA que sigui suficient
-            suitable_tables_no_pairing = [t for t in tables_no_pairing if t[2] >= num_people]
-            if suitable_tables_no_pairing:
-                # Ordenar per capacitat i agafar la més petita
-                best_table = min(suitable_tables_no_pairing, key=lambda t: t[2])
+
+            if not all_tables:
+                return None
+
+            # ===================================================================
+            # FASE 1: BUSCAR TAULA INDIVIDUAL (la més petita que càpiga)
+            # ===================================================================
+            suitable_single_tables = [
+                t for t in all_tables
+                if t[2] >= num_people  # capacitat >= num_people
+            ]
+
+            if suitable_single_tables:
+                # Ordenar per capacitat (més petita primer)
+                best_single = min(suitable_single_tables, key=lambda t: t[2])
+                print(f"✅ [FIND_TABLES] Taula individual trobada: #{best_single[1]} (cap. {best_single[2]} per {num_people} persones)")
                 return {
                     'tables': [{
-                        'id': best_table[0],
-                        'number': best_table[1],
-                        'capacity': best_table[2]
+                        'id': best_single[0],
+                        'number': best_single[1],
+                        'capacity': best_single[2]
                     }],
-                    'total_capacity': best_table[2]
+                    'total_capacity': best_single[2]
                 }
-            
-            # 3. Taula AMB PAIRING amb capacitat EXACTA
-            for table in tables_with_pairing:
-                if table[2] == num_people:
-                    return {
-                        'tables': [{
-                            'id': table[0],
-                            'number': table[1],
-                            'capacity': table[2]
-                        }],
-                        'total_capacity': table[2]
-                    }
-            
-            # 4. Taula AMB PAIRING amb capacitat mínima suficient (la més petita possible)
-            # ✅ CORRECCIÓ: Buscar la taula MÉS PETITA que sigui suficient
-            suitable_tables_with_pairing = [t for t in tables_with_pairing if t[2] >= num_people]
-            if suitable_tables_with_pairing:
-                # Ordenar per capacitat i agafar la més petita
-                best_table = min(suitable_tables_with_pairing, key=lambda t: t[2])
-                return {
-                    'tables': [{
-                        'id': best_table[0],
-                        'number': best_table[1],
-                        'capacity': best_table[2]
-                    }],
-                    'total_capacity': best_table[2]
-                }
-            
-            # 5. ÚLTIM RECURS: Intentar combinar taules amb pairing
-            all_tables = tables_no_pairing + tables_with_pairing
-            for table in all_tables:
-                table_id, table_num, capacity, pairing = table
-                
-                if not pairing:
+
+            # ===================================================================
+            # FASE 2: COMBINAR TAULES (si cap taula individual és suficient)
+            # ===================================================================
+            print(f"⚠️  [FIND_TABLES] Cap taula individual per {num_people} persones, buscant combinacions...")
+
+            from itertools import combinations
+
+            # PRE-FILTRAR: Només taules amb pairing definit (les que es poden combinar)
+            tables_with_pairing = [t for t in all_tables if t[3] is not None and t[3]]
+
+            if not tables_with_pairing:
+                print(f"❌ [FIND_TABLES] No hi ha taules amb pairing definit per combinar")
+                return None
+
+            print(f"🔍 [FIND_TABLES] Pre-filtrat: {len(tables_with_pairing)} taules amb pairing (de {len(all_tables)} totals)")
+
+            # ===================================================================
+            # FASE 2.1: COMBINACIONS DE 2 TAULES
+            # ===================================================================
+            best_2_tables = None
+            best_2_excess = 999
+
+            for combo in combinations(tables_with_pairing, 2):
+                # Validar pairing (han d'estar connectades)
+                if not self._is_valid_combination(combo):
                     continue
-                
-                # Buscar taules del pairing que estiguin disponibles
-                paired_tables = []
-                total_cap = capacity
-                
-                for paired_num in pairing:
-                    # Buscar si la taula paired està disponible
-                    paired_table = next(
-                        (t for t in all_tables if t[1] == paired_num),
-                        None
-                    )
-                    
-                    if paired_table:
-                        paired_tables.append({
-                            'id': paired_table[0],
-                            'number': paired_table[1],
-                            'capacity': paired_table[2]
-                        })
-                        total_cap += paired_table[2]
-                        
-                        # Si ja tenim prou capacitat, retornar
-                        if total_cap >= num_people:
-                            return {
-                                'tables': [{
-                                    'id': table_id,
-                                    'number': table_num,
-                                    'capacity': capacity
-                                }] + paired_tables,
-                                'total_capacity': total_cap
-                            }
-            
-            # No s'ha trobat cap taula disponible
+
+                total_capacity = sum(t[2] for t in combo)
+
+                # Si no és suficient, descartar
+                if total_capacity < num_people:
+                    continue
+
+                excess = total_capacity - num_people
+
+                # Si excess<=1, hem trobat una combinació excel·lent! PARAR
+                if excess <= 1:
+                    best_2_tables = combo
+                    best_2_excess = excess
+                    table_nums = '+'.join(str(t[1]) for t in combo)
+                    print(f"✅ [FIND_TABLES] Combinació excel·lent de 2 trobada: {table_nums} (cap. {total_capacity}, excess: {excess})")
+                    break  # EARLY EXIT!
+
+                # Guardar si és la millor fins ara
+                if excess < best_2_excess:
+                    best_2_tables = combo
+                    best_2_excess = excess
+
+            # Si tenim combinació de 2 amb excess<=1, retornar-la (excel·lent!)
+            if best_2_tables and best_2_excess <= 1:
+                tables_list = [
+                    {'id': t[0], 'number': t[1], 'capacity': t[2]}
+                    for t in best_2_tables
+                ]
+                total_cap = sum(t[2] for t in best_2_tables)
+                table_numbers = '+'.join(str(t['number']) for t in tables_list)
+                print(f"✅ [FIND_TABLES] Combinació de 2 acceptada: {table_numbers} (cap. {total_cap}, excess: {best_2_excess})")
+                return {
+                    'tables': tables_list,
+                    'total_capacity': total_cap
+                }
+
+            # ===================================================================
+            # FASE 2.2: COMBINACIONS DE 3 TAULES (només si no hem trobat res bo amb 2)
+            # ===================================================================
+            print(f"🔍 [FIND_TABLES] No hi ha combinació de 2 acceptable (millor excess: {best_2_excess}), buscant 3 taules...")
+
+            best_3_tables = None
+            best_3_excess = 999
+
+            for combo in combinations(tables_with_pairing, 3):
+                # Validar pairing (han d'estar connectades)
+                if not self._is_valid_combination(combo):
+                    continue
+
+                total_capacity = sum(t[2] for t in combo)
+
+                # Si no és suficient, descartar
+                if total_capacity < num_people:
+                    continue
+
+                excess = total_capacity - num_people
+
+                # Si excess<=1, hem trobat una combinació excel·lent! PARAR
+                if excess <= 1:
+                    best_3_tables = combo
+                    best_3_excess = excess
+                    table_nums = '+'.join(str(t[1]) for t in combo)
+                    print(f"✅ [FIND_TABLES] Combinació excel·lent de 3 trobada: {table_nums} (cap. {total_capacity}, excess: {excess})")
+                    break  # EARLY EXIT!
+
+                # Guardar si és la millor fins ara
+                if excess < best_3_excess:
+                    best_3_tables = combo
+                    best_3_excess = excess
+
+            # Si tenim combinació de 3, retornar-la (la millor possible)
+            if best_3_tables:
+                tables_list = [
+                    {'id': t[0], 'number': t[1], 'capacity': t[2]}
+                    for t in best_3_tables
+                ]
+                total_cap = sum(t[2] for t in best_3_tables)
+                table_numbers = '+'.join(str(t['number']) for t in tables_list)
+                print(f"✅ [FIND_TABLES] Combinació de 3 acceptada: {table_numbers} (cap. {total_cap}, excess: {best_3_excess})")
+                return {
+                    'tables': tables_list,
+                    'total_capacity': total_cap
+                }
+
+            # NO buscar combinacions de 4 - si no hem trobat res amb 2 o 3, no hi ha solució
+            print(f"❌ [FIND_TABLES] No s'ha trobat cap combinació vàlida de 2 o 3 taules per {num_people} persones")
             return None
-            
+
         except Exception as e:
             print(f"❌ Error buscant taules combinades: {e}")
             import traceback
             traceback.print_exc()
             return None
+
+    def _is_valid_combination(self, tables_combo):
+        """
+        Verifica si una combinació de taules és vàlida segons els pairings
+
+        REGLES ESTRICTES:
+        1. Si només 1 taula: sempre vàlid
+        2. Si múltiples taules: TOTES han de tenir pairing definit i estar connectades
+        """
+        # Si només hi ha 1 taula, sempre és vàlid
+        if len(tables_combo) == 1:
+            return True
+
+        # Per múltiples taules: TOTES han de tenir pairing definit
+        tables_without_pairing = [t for t in tables_combo if t[3] is None or not t[3]]
+
+        if tables_without_pairing:
+            # Log eliminat per evitar saturació (massa combinacions)
+            return False
+
+        # Verificar que totes les taules estan connectades per pairing
+        # Convertir a diccionari per accés ràpid
+        tables_dict = {t[1]: t for t in tables_combo}  # table_number -> table
+        table_numbers = set(tables_dict.keys())
+
+        # Comprovar que totes les taules estan connectades per pairing
+        # Algoritme BFS: començar per la primera taula i expandir per pairings
+        visited = set()
+        to_visit = [tables_combo[0][1]]  # table_number
+
+        while to_visit:
+            current_num = to_visit.pop(0)
+            if current_num in visited:
+                continue
+
+            visited.add(current_num)
+
+            # Obtenir pairing d'aquesta taula
+            current_table = tables_dict.get(current_num)
+            if current_table and current_table[3]:  # pairing no és NULL
+                pairing_list = current_table[3]
+                for paired_num in pairing_list:
+                    if paired_num in table_numbers and paired_num not in visited:
+                        to_visit.append(paired_num)
+
+        # Si hem visitat totes les taules de la combinació, és vàlida
+        is_valid = len(visited) == len(tables_combo)
+
+        # Log eliminat per evitar saturació (massa combinacions)
+
+        return is_valid
     
 
 
@@ -517,18 +605,19 @@ class AppointmentManager:
                 print(f"🔄 [FIND SLOT] Ajustant a: {requested_datetime}")
             
             # Buscar en el dia sol·licitat primer
-            slot = self._find_slot_on_date(requested_date, requested_time, num_people, now)
+            slot = self._find_slot_on_date(requested_date, requested_time, num_people, now, requested_date, requested_time)
             if slot:
                 return slot
-            
+
             # Si no hi ha disponibilitat aquell dia, buscar en els propers dies
             print(f"🔍 [FIND SLOT] No hi ha disponibilitat el {requested_date}, buscant en dies següents...")
-            
+
             for days_ahead in range(1, max_days_ahead + 1):
                 next_date = (datetime.strptime(requested_date, "%Y-%m-%d") + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
-                
+
                 # Buscar a partir de la mateixa hora sol·licitada
-                slot = self._find_slot_on_date(next_date, requested_time, num_people, now)
+                # IMPORTANT: Passar la data/hora ORIGINAL per determinar correctament is_requested
+                slot = self._find_slot_on_date(next_date, requested_time, num_people, now, requested_date, requested_time)
                 if slot:
                     return slot
             
@@ -541,10 +630,18 @@ class AppointmentManager:
             traceback.print_exc()
             return None
 
-    def _find_slot_on_date(self, date, start_time, num_people, now):
+    def _find_slot_on_date(self, date, start_time, num_people, now, original_requested_date, original_requested_time):
         """
         Buscar un slot disponible en una data específica
         Prova primer l'hora sol·licitada, després busca altres hores disponibles
+
+        Args:
+            date: Data a comprovar
+            start_time: Hora a partir de la qual començar a buscar
+            num_people: Nombre de persones
+            now: Datetime actual
+            original_requested_date: Data originalment sol·licitada per l'usuari
+            original_requested_time: Hora originalment sol·licitada per l'usuari
 
         Retorna el primer slot disponible o None
         """
@@ -656,14 +753,22 @@ class AppointmentManager:
                 tables_result = self.find_combined_tables(check_datetime, end_datetime, num_people)
 
                 if tables_result:
-                    is_requested = (check_time == start_time)
+                    # IMPORTANT: Comprovar que TANT la data COM l'hora coincideixin amb la sol·licitud original
+                    is_requested = (date == original_requested_date and check_time == original_requested_time)
                     print(f"✅ [SLOT] Trobat slot disponible: {date} {check_time} (sol·licitat: {is_requested})")
+
+                    reason = None
+                    if not is_requested:
+                        if date != original_requested_date:
+                            reason = f"El restaurant està tancat el {original_requested_date}"
+                        else:
+                            reason = f"L'hora sol·licitada ({original_requested_time}) no està disponible"
 
                     return {
                         'date': date,
                         'time': check_time,
                         'is_requested': is_requested,
-                        'reason': None if is_requested else f"L'hora sol·licitada ({start_time}) no està disponible"
+                        'reason': reason
                     }
                 else:
                     print(f"❌ [SLOT] {check_time} - No hi ha taules per {num_people} persones")
@@ -1009,8 +1114,11 @@ class AppointmentManager:
             }
 
 
-    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=1, notes=None):
+    def create_appointment(self, phone, client_name, date, time, num_people, duration_hours=None, notes=None, language=None):
         try:
+                    # Si no es passa duration_hours, obtenir-lo de la configuració
+            if duration_hours is None:
+                duration_hours = config.get_float('default_booking_duration_hours', 1.5)
             # Parsejar la data/hora com a NAIVE
             naive_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
             print(f"🕐 [TIMEZONE DEBUG] Input rebut: date={date}, time={time}")
@@ -1033,11 +1141,23 @@ class AppointmentManager:
             if not is_open:
                 print(f"❌ [CREATE] Restaurant tancat: {period}")
                 return None
-            
-            # IMPORTANT: Assegurar que el client existeix a customers
-            self.save_customer_info(phone, client_name)
-            
-            customer_language = self.get_customer_language(phone) or 'es'
+
+            # IMPORTANT: NO sobreescriure l'idioma si ja existeix
+            # Primer, comprovar si el client ja té idioma guardat
+            existing_language = self.get_customer_language(phone)
+
+            if existing_language:
+                # Client ja té idioma → mantenir-lo, NOMÉS actualitzar nom
+                print(f"🔒 [LANG] Client ja té idioma '{existing_language}' - NO sobreescriure")
+                self.save_customer_info(phone, client_name, language=None)
+                customer_language = existing_language
+            else:
+                # Client nou → guardar idioma només si és el primer cop
+                if not language:
+                    language = 'es'  # per defecte
+                print(f"👋 [LANG] Client nou - guardant idioma: {language}")
+                self.save_customer_info(phone, client_name, language)
+                customer_language = language
             
             # Buscar taules (individuals o combinades)
             tables_result = self.find_combined_tables(start_time, end_time, num_people)
@@ -1106,7 +1226,238 @@ class AppointmentManager:
             import traceback
             traceback.print_exc()
             return None
-    
+
+    def _is_time_in_allowed_slots(self, time_str, date_str):
+        """
+        Valida si una hora està dins dels time slots permesos segons la configuració.
+
+        Args:
+            time_str: Hora en format "HH:MM" (ex: "20:00")
+            date_str: Data en format "YYYY-MM-DD" (ex: "2025-11-12")
+
+        Returns:
+            True si l'hora és vàlida, False altrament
+        """
+        try:
+            time_slots_mode = config.get_str('time_slots_mode', 'interval')
+
+            # Obtenir horaris d'obertura per la data donada
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
+                        FROM opening_hours
+                        WHERE date = %s
+                    """, (date_str,))
+
+                    row = cursor.fetchone()
+
+                    if not row:
+                        # Si no hi ha horaris específics, utilitzar horaris per defecte del dia de la setmana
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        day_name = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][date_obj.weekday()]
+
+                        status = config.get_str(f'{day_name}_status', 'closed')
+                        if status == 'closed':
+                            print(f"⚠️ [VALIDATE TIME] Restaurant tancat el {date_str}")
+                            return False
+
+                        lunch_start = config.get_str(f'{day_name}_lunch_start', '12:00')
+                        lunch_end = config.get_str(f'{day_name}_lunch_end', '15:00')
+                        dinner_start = config.get_str(f'{day_name}_dinner_start', '19:00')
+                        dinner_end = config.get_str(f'{day_name}_dinner_end', '22:30')
+                    else:
+                        status, lunch_start, lunch_end, dinner_start, dinner_end = row
+
+            # Construir time_slots segons els horaris d'obertura
+            time_slots = []
+
+            if status in ['full_day', 'lunch_only'] and lunch_start and lunch_end:
+                time_slots.append({
+                    'start': lunch_start if isinstance(lunch_start, str) else lunch_start.strftime("%H:%M"),
+                    'end': lunch_end if isinstance(lunch_end, str) else lunch_end.strftime("%H:%M"),
+                    'name': 'lunch'
+                })
+
+            if status in ['full_day', 'dinner_only'] and dinner_start and dinner_end:
+                time_slots.append({
+                    'start': dinner_start if isinstance(dinner_start, str) else dinner_start.strftime("%H:%M"),
+                    'end': dinner_end if isinstance(dinner_end, str) else dinner_end.strftime("%H:%M"),
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                print(f"⚠️ [VALIDATE TIME] No hi ha time slots disponibles el {date_str}")
+                return False
+
+            if time_slots_mode == 'interval':
+                # Mode interval: qualsevol hora dins dels slots generals amb l'interval correcte
+                time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+                time_parts = time_str.split(':')
+                time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+
+                # Comprovar que l'hora estigui en un múltiple de l'interval
+                if time_minutes % time_slot_interval != 0:
+                    print(f"⚠️ [VALIDATE TIME] {time_str} no està en un interval de {time_slot_interval} minuts")
+                    return False
+
+                # Comprovar que estigui dins d'un dels slots (lunch o dinner)
+                for slot in time_slots:
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                    if slot_start_minutes <= time_minutes <= slot_end_minutes:
+                        print(f"✅ [VALIDATE TIME] {time_str} és vàlid (mode interval)")
+                        return True
+
+                print(f"⚠️ [VALIDATE TIME] {time_str} no està dins de cap slot de servei")
+                return False
+
+            elif time_slots_mode == 'fixed':
+                # Mode fixed: només hores específiques definides a la configuració
+                time_parts = time_str.split(':')
+                time_minutes = int(time_parts[0]) * 60 + int(time_parts[1])
+
+                for slot in time_slots:
+                    # Determinar quines hores fixes usar (lunch o dinner)
+                    if slot['name'] == 'lunch':
+                        fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                    else:  # dinner
+                        fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                    # Comprovar que l'hora sol·licitada estigui a la llista
+                    if time_str in fixed_times:
+                        slot_start_parts = slot['start'].split(':')
+                        slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                        slot_end_parts = slot['end'].split(':')
+                        slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                        # Verificar que també estigui dins del rang del slot
+                        if slot_start_minutes <= time_minutes <= slot_end_minutes:
+                            print(f"✅ [VALIDATE TIME] {time_str} és vàlid (mode fixed, slot: {slot['name']})")
+                            return True
+
+                print(f"⚠️ [VALIDATE TIME] {time_str} NO està en els slots fixos permesos")
+                return False
+
+            # Mode desconegut, rebutjar
+            print(f"⚠️ [VALIDATE TIME] Mode desconegut: {time_slots_mode}")
+            return False
+
+        except Exception as e:
+            print(f"❌ Error validant time slot: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def get_available_time_slots(self, date_str, num_people=1):
+        """
+        Retorna els time slots disponibles per una data donada.
+
+        Args:
+            date_str: Data en format "YYYY-MM-DD"
+            num_people: Nombre de persones (per defecte 1, ja que només volem saber els slots de temps)
+
+        Returns:
+            List de strings amb les hores disponibles (ex: ["20:00", "22:00"])
+            o llista buida si no hi ha configuració de slots fixos
+        """
+        try:
+            time_slots_mode = config.get_str('time_slots_mode', 'interval')
+
+            # Obtenir horaris d'obertura per la data donada
+            with self.get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT status, lunch_start, lunch_end, dinner_start, dinner_end
+                        FROM opening_hours
+                        WHERE date = %s
+                    """, (date_str,))
+
+                    row = cursor.fetchone()
+
+                    if not row:
+                        # Si no hi ha horaris específics, utilitzar horaris per defecte del dia de la setmana
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        day_name = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][date_obj.weekday()]
+
+                        status = config.get_str(f'{day_name}_status', 'closed')
+                        if status == 'closed':
+                            print(f"ℹ️  [GET SLOTS] Restaurant tancat el {date_str}")
+                            return []
+
+                        lunch_start = config.get_str(f'{day_name}_lunch_start', '12:00')
+                        lunch_end = config.get_str(f'{day_name}_lunch_end', '15:00')
+                        dinner_start = config.get_str(f'{day_name}_dinner_start', '19:00')
+                        dinner_end = config.get_str(f'{day_name}_dinner_end', '22:30')
+                    else:
+                        status, lunch_start, lunch_end, dinner_start, dinner_end = row
+
+            # Construir time_slots segons els horaris d'obertura
+            time_slots = []
+
+            if status in ['full_day', 'lunch_only'] and lunch_start and lunch_end:
+                time_slots.append({
+                    'start': lunch_start if isinstance(lunch_start, str) else lunch_start.strftime("%H:%M"),
+                    'end': lunch_end if isinstance(lunch_end, str) else lunch_end.strftime("%H:%M"),
+                    'name': 'lunch'
+                })
+
+            if status in ['full_day', 'dinner_only'] and dinner_start and dinner_end:
+                time_slots.append({
+                    'start': dinner_start if isinstance(dinner_start, str) else dinner_start.strftime("%H:%M"),
+                    'end': dinner_end if isinstance(dinner_end, str) else dinner_end.strftime("%H:%M"),
+                    'name': 'dinner'
+                })
+
+            if not time_slots:
+                print(f"ℹ️  [GET SLOTS] No hi ha time slots disponibles el {date_str}")
+                return []
+
+            if time_slots_mode == 'fixed':
+                # Retornar només els slots fixos configurats
+                available = []
+                for slot in time_slots:
+                    if slot['name'] == 'lunch':
+                        fixed_times = config.get_list('fixed_time_slots_lunch', ['13:00', '15:00'])
+                    else:  # dinner
+                        fixed_times = config.get_list('fixed_time_slots_dinner', ['20:00', '21:30'])
+
+                    available.extend(fixed_times)
+
+                print(f"ℹ️  [GET SLOTS] Mode fixed - Slots disponibles: {available}")
+                return sorted(set(available))  # Eliminar duplicats i ordenar
+
+            elif time_slots_mode == 'interval':
+                # En mode interval, retornar els intervals dins dels slots de servei
+                time_slot_interval = config.get_int('time_slot_interval_minutes', 30)
+                available = []
+
+                for slot in time_slots:
+                    slot_start_parts = slot['start'].split(':')
+                    slot_start_minutes = int(slot_start_parts[0]) * 60 + int(slot_start_parts[1])
+                    slot_end_parts = slot['end'].split(':')
+                    slot_end_minutes = int(slot_end_parts[0]) * 60 + int(slot_end_parts[1])
+
+                    # Generar tots els intervals possibles
+                    for minutes in range(slot_start_minutes, slot_end_minutes + 1, time_slot_interval):
+                        hour = minutes // 60
+                        minute = minutes % 60
+                        available.append(f"{hour:02d}:{minute:02d}")
+
+                print(f"ℹ️  [GET SLOTS] Mode interval - Slots disponibles: {available}")
+                return available
+
+            return []
+
+        except Exception as e:
+            print(f"❌ Error obtenint time slots: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
     def update_appointment(self, phone, appointment_id, new_date=None, new_time=None, new_num_people=None, new_table_ids=None):
         try:
             with self.get_db_connection() as conn:
@@ -1127,6 +1478,13 @@ class AppointmentManager:
                         time_part = new_time if new_time else current_start.strftime("%H:%M")
 
                         print(f"🕐 [TIMEZONE DEBUG UPDATE] Input rebut: date={date_part}, time={time_part}")
+
+                        # VALIDACIÓ: Si es canvia l'hora, validar que estigui en els time slots permesos
+                        if new_time:
+                            if not self._is_time_in_allowed_slots(time_part, date_part):
+                                print(f"❌ [UPDATE] Hora {time_part} NO és vàlida segons els time slots configurats")
+                                return None
+                            print(f"✅ [UPDATE] Hora {time_part} validada correctament")
 
                         # Parsejar com a NAIVE
                         naive_datetime = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")

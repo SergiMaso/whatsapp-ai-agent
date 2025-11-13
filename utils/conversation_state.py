@@ -97,7 +97,7 @@ def set_conversation_state(phone, key, value):
 def get_conversation_language(phone):
     """Obtener idioma de la conversación actual"""
     state = get_conversation_state(phone)
-    return state.get('language', 'ca')  # Default catalán
+    return state.get('language', 'es')  # Default español
 
 def set_conversation_language(phone, language):
     """Guardar idioma de la conversación"""
