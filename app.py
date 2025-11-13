@@ -2666,11 +2666,13 @@ def elevenlabs_update_appointment():
 
         # Buscar la reserva que coincideixi
         apt_id = None
+        apt_num_people = None
         for apt in appointments:
             apt_id_temp, name, apt_date, start_time, end_time, num_people, table_num, capacity, status = apt
 
             if str(apt_date) == date and start_time.strftime("%H:%M") == time:
                 apt_id = apt_id_temp
+                apt_num_people = num_people
                 logger.info(f"✅ [ELEVEN LABS UPDATE] Reserva trobada: ID {apt_id}")
                 break
 
@@ -2727,7 +2729,8 @@ def elevenlabs_update_appointment():
         else:
             # Si ha fallat l'actualització, obtenir els slots disponibles per oferir alternatives
             target_date = new_date if new_date else date
-            available_slots = appointment_manager.get_available_time_slots(target_date)
+            target_num_people = new_num_people if new_num_people else apt_num_people
+            available_slots = appointment_manager.get_available_time_slots(target_date, target_num_people)
 
             if available_slots and new_time:
                 # Si hi ha slots disponibles i s'ha intentat canviar l'hora, informar de les opcions vàlides
